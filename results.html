@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Results - F3L Contest Series</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>F3L Contest Series</h1>
+            <nav>
+                <ul>
+                    <li><a href="index.html">Home</a></li>
+                    <li><a href="schedule.html">Schedule</a></li>
+                    <li><a href="results.html" class="active">Results</a></li>
+                    <li><a href="about.html">About F3L</a></li>
+                    <li><a href="howto.html">How To</a></li>
+                    <li><a href="host.html">Host a Contest</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <div class="banner-image">
+        <img src="assets/ABQPilots.PNG" alt="F3L Pilots at Albuquerque">
+    </div>
+
+    <main>
+        <div class="content-card">
+            <h2>Live Series Standings</h2>
+            <p>Official standings are tracked on F3XVault and updated in real-time during contests.</p>
+
+            <div class="tabs">
+                <button class="tab-button active" onclick="switchTab('2026')">2026 Season</button>
+                <button class="tab-button" onclick="switchTab('2025')">2025 Season</button>
+            </div>
+
+            <div id="tab-2026" class="tab-content active">
+                <h3 style="margin-bottom: 1rem;">2026 Season Standings</h3>
+                <p style="margin-bottom: 1rem; color: #555;">
+                    The 2026 season kicks off in March. Standings will update automatically as contests are completed.
+                    <br>
+                    <a href="https://www.f3xvault.com/?action=series&function=series_view&series_id=438" 
+                       target="_blank" 
+                       rel="noopener">
+                        View on F3XVault →
+                    </a>
+                </p>
+                <iframe 
+                    src="https://www.f3xvault.com/?action=series&function=series_view&series_id=438" 
+                    class="standings-iframe"
+                    title="2026 F3L Series Standings">
+                </iframe>
+            </div>
+
+            <div id="tab-2025" class="tab-content">
+                <h3 style="margin-bottom: 1rem;">2025 Season Standings (Final)</h3>
+                <p style="margin-bottom: 1rem; color: #555;">
+                    Final standings from the 2025 F3L Contest Series.
+                    <br>
+                    <a href="https://www.f3xvault.com/?action=series&function=series_view&series_id=426" 
+                       target="_blank" 
+                       rel="noopener">
+                        View on F3XVault →
+                    </a>
+                </p>
+                <iframe 
+                    src="https://www.f3xvault.com/?action=series&function=series_view&series_id=426" 
+                    class="standings-iframe"
+                    title="2025 F3L Series Standings">
+                </iframe>
+            </div>
+        </div>
+
+        <div class="content-card">
+            <h2>Scoring Information</h2>
+            <p>All contests in the F3L Contest Series use the <a href="https://www.f3xvault.com/?action=series&function=series_view&series_id=438" target="_blank" rel="noopener">F3XVault</a> scoring system for accurate, real-time results and standings.</p>
+            
+            <h3>How Series Points Work</h3>
+            <p>The 2026 series uses standard scoring based on event percentage:</p>
+            <ul class="resource-list">
+                <li>Points are calculated as a percentage of the winner's score</li>
+                <li>Your best three events count toward your final series score</li>
+            </ul>
+
+        <script>
+            function switchTab(year) {
+                // Hide all tabs
+                document.querySelectorAll('.tab-content').forEach(tab => {
+                    tab.classList.remove('active');
+                });
+                
+                // Remove active class from all buttons
+                document.querySelectorAll('.tab-button').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+                
+                // Show selected tab
+                document.getElementById('tab-' + year).classList.add('active');
+                
+                // Add active class to clicked button
+                event.target.classList.add('active');
+                
+                // Scroll to top of standings
+                document.querySelector('.tabs').scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        </script>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 F3L Contest Series | <a href="http://www.f3lcontestseries.org" style="color: rgba(255,255,255,0.8);">www.F3LContestSeries.org</a></p>
+    </footer>
+</body>
+</html>
