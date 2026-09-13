@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>F3L High-start Construction - F3L Contest Series</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .spec-box {
+            background: var(--light-blue);
+            border-left: 4px solid var(--sky-blue);
+            border-radius: 8px;
+            padding: 1.5rem 1.5rem 0.5rem;
+            margin: 1.5rem 0;
+        }
+
+        
+        .tip-box {
+            background: #fff8e1;
+            border-left: 4px solid #f59e0b;
+            border-radius: 8px;
+            padding: 1.25rem 1.5rem;
+            margin: 1.5rem 0;
+        }
+
+        .tip-box strong {
+            color: #b45309;
+        }
+
+        .product-item {
+            display: flex;
+            gap: 1.5rem;
+            align-items: flex-start;
+            margin-bottom: 2rem;
+            padding-bottom: 2rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .product-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .product-item-text {
+            flex: 1;
+        }
+
+        .product-item-text h3 {
+            margin-top: 0;
+        }
+
+        .product-item img {
+            width: 180px;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+            flex-shrink: 0;
+            object-fit: contain;
+        }
+
+        .numbered-list {
+            list-style: none;
+            margin: 1rem 0;
+            counter-reset: step-counter;
+        }
+
+        .numbered-list li {
+            margin-bottom: 0.9rem;
+            padding-left: 2rem;
+            position: relative;
+            color: var(--text-gray);
+            line-height: 1.7;
+        }
+
+        .numbered-list li::before {
+            content: counter(step-counter) ".";
+            counter-increment: step-counter;
+            position: absolute;
+            left: 0;
+            color: var(--sky-blue);
+            font-weight: 700;
+            width: 1.5rem;
+        }
+
+        @media (max-width: 600px) {
+            .product-item {
+                flex-direction: column;
+            }
+
+            .product-item img {
+                width: 100%;
+                max-width: 280px;
+                margin: 0 auto;
+                display: block;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>F3L Contest Series</h1>
+            <nav>
+                <ul>
+                    <li><a href="index.html">Home</a></li>
+                    <li><a href="schedule.html">Schedule</a></li>
+                    <li><a href="results.html">Results</a></li>
+                    <li><a href="about.html">About F3L</a></li>
+                    <li><a href="howto.html" class="active">How To</a></li>
+                    <li><a href="host.html">Host a Contest</a></li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <div class="content-card">
+            <h2>F3L High-start Construction</h2>
+            <p><em>By Ed LaCroix &mdash; AMA 290291 &mdash; April 2026</em></p>
+
+            <p>Sailplanes typically have two ways to be &ldquo;launched&rdquo; into the air to altitude so that thermals can then be sought out for extended flight. The sailplane can use an electric motor for propulsion, or it can be towed into the air by either a winch or a high-start/bungee device.</p>
+
+            <p>I won&rsquo;t discuss the winch option as they are not used by F3L planes of the type used in current day F3L competitions. High-starts are the accepted method. And if a pilot is going to spend the time and money to build a high-start for personal use, it&rsquo;s wise to consider making it a F3L legal high-start so that they can best replicate the launch of their plane as it would be at an F3L contest.</p>
+        </div>
+
+        <div class="content-card">
+            <h2>F3L Legal High-start Requirements</h2>
+            <p><strong>F3L rules state the following for an F3L legal high-start:</strong></p>
+
+            <div class="spec-box">
+                <p>The hi-start consists of a rubber tube of <strong>15 &plusmn; 0.2 meters length</strong>, a nylon towline of <strong>100 &plusmn; 1 meter&rsquo;s length</strong> with a minimum diameter of <strong>0.7 mm</strong> and an attached pennant (a streamer is what is meant by pennant &mdash; not a parachute).</p>
+                <p>The pull strength of the rubber tube shall not exceed <strong>forty Newtons (4 kgf)</strong> &mdash; that&rsquo;s 8.99 or 9 pounds of &ldquo;pull&rdquo; if a digital fishing scale were used to measure the rubber when stretched to 45 meters or 147 feet.</p>
+            </div>
+
+            <p>In the scheme of personal high-starts, that your rubber meets the F3L rule requirements is not terribly important. It is important that the contest organizers supply high-starts that meet the rules.</p>
+
+            <p>Your interest is in assembling a quality high-start using durable components that will allow you to launch your F3L planes at very close to contest altitudes. So let&rsquo;s begin with describing what you need and where to get it and why.</p>
+        </div>
+
+        <div class="content-card">
+            <h2>Parts List</h2>
+
+            <h3>1. 15m Length of High-start &ldquo;Rubber&rdquo; Tubing</h3>
+            <p>The &ldquo;motor&rdquo; in your high-start assembly is elastic tubing of a diameter that will be close to providing the pull specified in the rules above. I put rubber in quotes because the best material is not rubber but rather silicone tubing.</p>
+            <p>Rubber tubing, typically surgical latex rubber tubing, is not very UV resistant and therefore it degrades (starts to form cracks which lead to breakage) pretty quickly. Silicone tubing has shown to be much longer lived &mdash; often providing several years of use before needing replacement.</p>
+
+            <h3>2. 100 Meters (328 Feet) of Nylon Line, 0.7mm or Larger</h3>
+            <p>The best type of line is braided fishing line. Typically, 150-pound test braided line is 0.7 mm in diameter.</p>
+
+            <h3>3. Pennant for the Glider End of the High-start</h3>
+            <p>The pennant has a ring that hooks to the glider. For personal use, a parachute can be used, but it adds weight to the system, and in a breeze means that end of the high-start can drift a considerably greater distance than a streamer will.</p>
+
+            <h3>4. Ground Stake</h3>
+            <p>You need a way to firmly anchor the tubing end of the high-start to the ground. Stretching out the tubing may only exert 9 pounds of pull but that still requires a very solid anchor &mdash; if the ground stake were to pull out under load it would be quite dangerous. So the stake needs to be long and strong.</p>
+
+            <h3>5. Hardware to Assemble the Components</h3>
+            <p>This amounts to a quick-link and some quality fishing snap-swivels.</p>
+
+            <h3>6. Extension Cord Reel</h3>
+            <p>A high-start needs to be stored on something that allows it to be easily laid out and also taken up after use. The best thing for the dollar is a plastic extension cord reel.</p>
+        </div>
+
+        <div class="content-card">
+            <h2>Material Sources</h2>
+
+            <div class="product-item">
+                <div class="product-item-text">
+                    <h3><a href="https://www.hyperflight.co.uk/products.asp?code=RES-HI-START&amp;name=f3-res-high-start-silicone-rubber" target="_blank" rel="noopener">High-start Silicone Tubing &mdash; 15m (49 ft)</a></h3>
+                    <p>Hyperflight&rsquo;s silicone tubing comes with both ends ready to accept a quick-link for the anchor stake and the other end to accept a snap-swivel connected to the tow-line.</p>
+                </div>
+                <img src="assets/highstart/image001.jpg" alt="Hyperflight silicone high-start tubing">
+            </div>
+
+            <div class="product-item">
+                <div class="product-item-text">
+                    <h3><a href="https://reactiontackle.com/products/reaction-tackle-x8-braided-fishing-line-hi-vis-yellow-8-strand" target="_blank" rel="noopener">150 Pound / 0.7mm Braided Nylon Line</a></h3>
+                    <p>FAI legal diameter. Order the 300 yard spool and you have more than enough for a second 100m long F3L legal tow-line.</p>
+                </div>
+                <img src="assets/highstart/image002.png" alt="150 lb braided fishing line spool">
+            </div>
+
+            <div class="product-item">
+                <div class="product-item-text">
+                    <h3><a href="https://www.hyperflight.co.uk/products.asp?code=HI-START-FLAG&amp;name=high-start-flag-pennant" target="_blank" rel="noopener">Pennant / Streamer</a></h3>
+                    <p>The Hyperflight streamer comes finished with a welded ring for hooking to the tow-hook on the glider and being attached to one end of the braided tow-line. The other end has a snap swivel &mdash; I recommend replacing the supplied swivel with a Gamakatsu snap for greater reliability.</p>
+                </div>
+                <img src="assets/highstart/image003.jpg" alt="Hyperflight high-start pennant streamer">
+            </div>
+
+            <div class="product-item">
+                <div class="product-item-text">
+                    <h3><a href="https://www.lowes.com/pd/Grip-Rite-8-in-x-3-8-in-Spike/3610434" target="_blank" rel="noopener">Anchor Stake</a></h3>
+                    <p>This &ldquo;stake&rdquo; is an 8 inch long, 3/8 inch diameter nail or spike. The link goes to Lowe&rsquo;s but Home Depot may also sell it. The length of this nail is not overkill &mdash; for safety, you need significant ground penetration. The nail will pass through one end of the quick-link recommended below.</p>
+                </div>
+                <img src="assets/highstart/image004.jpg" alt="8-inch ground anchor spike nail">
+            </div>
+
+            <div class="product-item">
+                <div class="product-item-text">
+                    <h3><a href="https://www.homedepot.com/p/Everbilt-3-16-in-Zinc-Quick-Link-42714/205887919?MERCH=REC-_-pipsem-_-205887548-_-2-_-n/a-_-n/a-_-n/a-_-n/a-_-n/a" target="_blank" rel="noopener">3/16-inch Quick Link</a></h3>
+                    <p>This quick link is large enough to easily allow the insertion of the anchor spike through it when staking down your high-start.</p>
+                </div>
+                <img src="assets/highstart/image005.jpg" alt="3/16-inch zinc quick link">
+            </div>
+
+            <div class="product-item">
+                <div class="product-item-text">
+                    <h3><a href="https://www.tacklewarehouse.com/Gamakatsu_Duo_Lock_Snap_with_Superline_Swivel_5pk/descpage-GDLSS.html?from=gshop&amp;gad_source=1&amp;gad_campaignid=11473504443&amp;gbraid=0AAAAADkexy6nwSLpuseyoxI_217u4UXVG&amp;gclid=Cj0KCQjwv-LOBhCdARIsAM5hdKdEjxn93r_cPdQxWsnATeJ7JdTQSaNn4eC5K-cKHaN65EFL9PoYy7AaAuThEALw_wcB" target="_blank" rel="noopener">Snap Swivels</a></h3>
+                    <p>The snap-swivel I recommend for both ends of the towline is the 5-pack of the <strong>Size 7</strong> (75 lb) <strong>Gamakatsu</strong> snap-swivels (PN 406400-7). They will easily connect the line to the screw-eye at one end of the Hyperflight silicone bungee tubing.</p>
+                </div>
+                <img src="assets/highstart/image006.jpg" alt="Gamakatsu Size 7 snap swivels">
+            </div>
+
+            <div class="product-item">
+                <div class="product-item-text">
+                    <h3><a href="https://www.acehardware.com/departments/lighting-and-electrical/extension-cords-and-power-strips/cord-reels/3009271?store=05015&amp;gclsrc=aw.ds&amp;gad_source=1&amp;gad_campaignid=23373844518&amp;gbraid=0AAAAADtqLJEt8W43rFPRikp5DZ-ktjPEr&amp;gclid=CjwKCAjwhe3OBhABEiwA6392zA2hdEjIO8t5_SNHFGYHPOxwPpWvhW31rdqDBH0zXjofn4BJQTmixBoCP34QAvD_BwE" target="_blank" rel="noopener">Extension Cord Reel</a></h3>
+                    <p>The reel this link takes you to is one that will minimize snagging the line when reeling it up. However, every home goods store &mdash; Lowe&rsquo;s, Home Depot, etc. &mdash; likely sells these reels.</p>
+                </div>
+                <img src="assets/highstart/image007.png" alt="Plastic extension cord reel">
+            </div>
+
+            <div class="product-item">
+                <div class="product-item-text">
+                    <h3><a href="https://www.amazon.com/Berkley-BTDFS50-1-Digital-Scale-50-Pound/dp/B0043X6MX4/ref=sr_1_30?crid=OFZEZ5PXDPL1&amp;dib=eyJ2IjoiMSJ9.akbiA-eWmRs6rqSaeBCRVp43y89HIeOmv8CdCcT4io79SvkUafk4YPNsO27-a-lpOUFceTmZK6xLHNeVvXLP9ahmnuz4FtN3d6VUEhlv0EuL_T83q9Oo0kREQlJb6oF8uniApy1ApPE9GkEK_VIXifRTpnMyqBv3dI1nUN7aZMuHU2QMDtnYonl_uopT-Li8FhQsFh69-FlmmJcQutCu3DsgbkfjOfZlAGuIyRXYkmgbUCHuh6wK4pcMh8LhI_AjBkW7u8oSECtQwNTzQnn4_zsN1GCt7ZsnSc17YUtuho4._8GafD_qmQQlnBSOt_QuDWPGTKbY71QBdYefh7Q5NQI&amp;dib_tag=se&amp;keywords=digital%2Bfishing%2Bscale&amp;qid=1776192969&amp;sprefix=digital%2Bfishing%2Bscale%2Caps%2C245&amp;sr=8-30&amp;th=1" target="_blank" rel="noopener">Digital Fishing Scale</a></h3>
+                    <p>If you want to experience launches with accuracy, you will need to know how far back to pull your glider once hooked up to the high-start. Though this Berkley scale isn&rsquo;t the cheapest on Amazon, its 50 lb maximum (most are 110 lb) suggests it may be more accurate at the 4 kg / 9 lb pull that is F3L specified. This scale can be set to show either pounds or kilograms.</p>
+                </div>
+                <img src="assets/highstart/image008.png" alt="Berkley 50 lb digital fishing scale">
+            </div>
+        </div>
+
+        <div class="content-card">
+            <h2>Knot-sense</h2>
+            <p>You&rsquo;re going to need to tie both ends of braided tow-line to snap-swivels for easy disassembly of the line from the tubing and the streamer should the need arise. And knowing a proper, self-clinching knot is a handy thing in general. Knots go by an array of names even for the same knot.</p>
+            <p>In this case, the <strong>Halyard knot</strong> is the one I recommend.</p>
+            <ul class="resource-list">
+                <li><strong><a href="https://knots3d.com/en/halyard-hitch-knot" target="_blank" rel="noopener">Tying a Halyard Knot &mdash; Interactive Animation</a></strong></li>
+            </ul>
+        </div>
+
+        <div class="content-card">
+            <h2>Assembly Process</h2>
+            <p>The worst part of building your F3L high-start is measuring out the 100 meters of line and tying a snap swivel to each end with the Halyard knot. After those things have been done, the process amounts to:</p>
+
+            <ol class="numbered-list">
+                <li>Attach the quick-link to one end of the Hyperflight tubing.</li>
+                <li>Tie a Size 7 snap-swivel to each end of the tow-line using the <a href="https://knots3d.com/en/halyard-hitch-knot" target="_blank" rel="noopener">Halyard knot</a>.</li>
+                <li>Clip the snap-swivel on the tow-line to the other end of the Hyperflight tubing.</li>
+                <li>Replace the Hyperflight streamer&rsquo;s supplied snap-swivel with one of the Gamakatsu snaps.</li>
+                <li>Attach the snap-swivel on the tow-line to the Hyperflight streamer&rsquo;s snap-swivel.</li>
+                <li>Starting with the streamer end, begin reeling up the line on the extension cord reel.</li>
+            </ol>
+
+            <div class="tip-box">
+                <p><strong>TIP:</strong> Find a short wood screw that you can screw into the side of the cord reel fairly close to the center hub. Leave about 3/16&rdquo; of the screw sticking out &mdash; be sure it doesn&rsquo;t interfere with winding the reel. This will give you something to hook the streamer&rsquo;s metal ring to before you start reeling up the bungee.</p>
+            </div>
+
+            <p style="margin-top: 2rem;">
+                <a href="howto.html" class="btn-secondary">&larr; Back to How To Guide</a>
+            </p>
+        </div>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 F3L Contest Series | <a href="http://www.f3lcontestseries.org" style="color: rgba(255,255,255,0.8);">www.F3LContestSeries.org</a></p>
+    </footer>
+</body>
+</html>

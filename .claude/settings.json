@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.rcgroups.com)",
+      "WebFetch(domain:tollbit.rcgroups.com)"
+    ]
+  }
+}
