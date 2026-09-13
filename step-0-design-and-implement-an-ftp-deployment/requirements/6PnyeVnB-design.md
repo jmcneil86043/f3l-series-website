@@ -139,7 +139,7 @@ No preview build is produced: with no build step, the checkout is the build.
 ## Testing
 
 - Unit (`python3 -m unittest discover -s deploy/tests`): deploy-set collection from a temp tree (dotfiles and non-site files excluded); plan cases in the table above; `--force`; manifest absent; remote-only detection with the manifest excluded; env-file parsing and resolution order (password from env beats file; missing password exits 2); dirty-tree guard.
-- Live smoke, only once credentials exist (the `[needs-you]` item after this plan): `deploy.py` dry run shows every file as new (no manifest yet); `--upload` sends everything and writes the manifest; a second dry run reports nothing to do; the live site renders. Recorded in `deploy/README.md` as the acceptance checklist, and performed in the final `[needs-you]` item.
+- Live smoke, only once credentials exist (checklist item 4): `deploy.py` dry run shows every file as new (no manifest yet); `--upload` sends everything and writes the manifest; a second dry run reports nothing to do; the live site renders. Recorded in `deploy/README.md` as the acceptance checklist, and performed in the final `[needs-you]` item.
 
 ## Implementation tasks
 
@@ -150,12 +150,12 @@ Checklist names as they should appear on the step card, after this task's item:
 1. `[needs-you] Review the design and plan`
 2. `Write deploy/deploy.py and its unit tests (deploy set, manifest plan, FTP upload, credentials, dry-run CLI)`
 3. `Add deploy/preview.sh, deploy.env.example, deploy/README.md, .gitignore and ledger entry; run tests and commit`
-4. `[needs-you] Try the new functions yourself`
+4. `[needs-you] Put the FTP credentials where the deploy will read them …` (the pre-existing item, moved here)
+5. `[needs-you] Try the new functions yourself`
 
-The pre-existing `[needs-you] Put the FTP credentials where the deploy will read them …` item sits after item 4, because the runner inserts new items directly after this task's item. That is fine: the credentials item and the try item are both John's, and the first live deploy needs both. Noted in § Open decisions.
+The credentials item comes before the try item because the live smoke in `deploy/README.md` needs the env file in place.
 
 ## Open decisions
 
-- **Checklist order.** The credentials `[needs-you]` item ends up after "Try the new functions yourself" rather than before it. Do them together: place the env file, then run the acceptance checklist in `deploy/README.md`.
 - **Plain FTP.** The host refuses TLS, so the password crosses the network in clear on every deploy, exactly as the VS Code sync does today. If the FatCow account offers SFTP, switching is a later step (the `Remote` interface is the seam); not pursued here.
 - **Remote-only files.** Anything in `/f3l_series` that the repo does not contain is reported and left alone. If the first dry run shows leftovers John wants gone, `--delete` on that one deploy is the tool; the default stays report-only.
