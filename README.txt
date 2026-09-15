@@ -31,18 +31,11 @@ File Organization Tips:
 - If you add more downloadable files (PDFs, forms, etc.), put them in assets
 - Keep the main directory clean with just the HTML and CSS files
 
-Testing Locally:
-----------------
-After adding the assets folder:
-1. Open index.html in Chrome
-2. Navigate to "Host a Contest" tab
-3. Click "Join the Series" tab
-4. Test the download button for the contest bulletin template
-
-When Uploading to AWS S3 or Apache:
-------------------------------------
-Make sure to upload the entire assets folder along with all HTML/CSS files.
-The folder structure must be maintained for download links to work.
+Preview and Deploy:
+-------------------
+Preview a checkout locally with deploy/preview.sh, and publish to the live site with
+deploy/deploy.py (a dry run unless you pass --upload). Setup, usage and the
+credentials file are described in deploy/README.md.
 
 Questions?
 ----------
