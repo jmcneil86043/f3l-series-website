@@ -13,6 +13,7 @@ To complete the website setup, you need to create an 'assets' folder and add you
    ├── index.html
    ├── schedule.html
    ├── results.html
+   ├── postal.html
    ├── about.html
    ├── howto.html
    ├── host.html
