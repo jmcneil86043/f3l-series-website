@@ -16,3 +16,4 @@ Never delete: mark reversals **superseded** and point forward. Read this file be
 - **2026-09-15 · The git history was rewritten to remove `smartftp.json` from every commit (after merging Step 0), force-pushed to GitHub, and the old objects purged from the Mika and Bishop clones; the FTP password itself was not changed.** Why: the password had been committed in the first commit and pushed; John chose a rewrite over changing the password. Any clone made before 2026-09-15 still holds it and must be re-cloned, not pulled.
 
 ## Content
+- **2026-09-16 · The pull-string video stays a plain link on howto.html; the site ships no embedded player for it.** Why: John declined an embedded player at the 2026-09-15 design review, and this step's checklist item name still asks for one because it was written before that review. → `step-1-schedule-updates-cvrc-dec-5-6/requirements/gqaNXa1D-design.md`
