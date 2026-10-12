@@ -27,6 +27,8 @@ A visitor who types the site's address, or follows any old link to it, ends up o
 - The footer link on every page reads `https://www.f3lcontestseries.org/`.
 - The provider renews the certificate itself, and the ledger records where in the panel it lives and how renewal works.
 - A deploy dry run after the publish reports nothing to send, and the server manifest records the step's final commit.
+- (Added at review, 2026-10-12) `www.mcneilco.com`, which is served from the parent directory of this site on the same hosting account, answers exactly as before over HTTP: no redirect, same pages. `http://www.mcneilco.com/f3l_series/<page>` redirects once to the same page on `https://www.f3lcontestseries.org/`.
+- (Added at review, 2026-10-12) `mcneilco.com` has a trusted certificate of its own after the certificate gate; nothing else about that site changes in this step.
 
 ## Constraints from the ledger
 - "The site deploy runs from Bishop (or John's Mac) as deploy/deploy.py invoked by hand or by a step worker, with credentials in the environment or ~/.config/f3l-series-website/deploy.env; no GitHub Action is wired." — `decisions/F3L-Series-Web-Site-decisions.md` § Repo and runtime, 2026-09-15.
@@ -40,7 +42,9 @@ A visitor who types the site's address, or follows any old link to it, ends up o
 - No `<link rel="canonical">` tags exist and none are added; after the redirect, https-www is the only form the server serves. Not material: one line per page if wanted later.
 - No HSTS header in this step. Not material: one header line, added later once HTTPS has run cleanly for a while.
 - The publish (`deploy.py --upload`) is run by the closing worker after it has verified the certificate is live, not by John in the try item, because the redirect must never go live ahead of the certificate and the worker can check both in one run. Not material: John can say at review that he prefers to run the upload himself.
-- The redirect lives in a tracked `.htaccess` rather than a panel "force HTTPS" toggle (if the panel has one). Not material to the outcome; the file is auditable and reproducible, the toggle is noted as an alternative.
+- The redirect lives in a tracked `.htaccess` rather than a panel "force HTTPS" toggle (if the panel has one). Not material to the outcome; the file is auditable and reproducible, the toggle is noted as an alternative. Confirmed at review (2026-10-12): the toggle stays off for both domains because on a co-hosted account it may be account-wide.
+- (Added at review, 2026-10-12) The F3L directory is also reachable as `www.mcneilco.com/f3l_series/`, so every redirect rule is scoped to the F3L host names, and the co-hosted path is redirected to the canonical site on purpose. Material: an unscoped rule would send that path to a 404 on the F3L host. Settled in the design § Redirect.
+- (Added at review, 2026-10-12) The mcneilco.com site's own HTTPS redirect and links are out of scope: that site is not in this repo and has no deploy here. Only its certificate is enabled, at the same panel visit, because it costs nothing and changes nothing over HTTP.
 
 ## Open questions (what)
-(none)
+(none; the review of 2026-10-12 raised the co-hosting constraint and settled it in the design)

@@ -1,6 +1,6 @@
 # Design — Step 2: Get a certificate and serve the site over HTTPS
 
-Step: https://trello.com/c/RbsRQzYp   Written: 2026-09-24 by task 6ab523bfa0e4fe24df0a8d48
+Step: https://trello.com/c/RbsRQzYp   Written: 2026-09-24 by task 6ab523bfa0e4fe24df0a8d48   Reviewed: 2026-10-12 (rulings in § Decisions at review)
 Spec: `step-2-get-a-certificate-and-serve-the/requirements/IVs7c008-spec.md`
 Ledger: `decisions/F3L-Series-Web-Site-decisions.md`
 
@@ -26,6 +26,8 @@ No DNS change, no CDN, no HSTS, no canonical tags (spec § Assumptions).
 | FatCow docs | Free SSL is enabled per domain in the panel and covers the domain and its subdomains; it cannot be combined with a paid certificate on the same domain. The help site now redirects to `networksolutions.com/help`, so the panel may carry either brand. Panel is vDeck (FatCow's own; looks like cPanel, is not). Paid alternative historically ~$45/yr (GeoTrust/Comodo via the panel). |
 | Site self-references | Exactly one per page: the footer `<a href="http://www.f3lcontestseries.org">` on all 8 pages. No `<link rel="canonical">`, no `og:url`, no `<base>`. No `http://` in any `src`, so no mixed content once HTTPS is on. `results.html` already frames F3XVault over https. One external `http://www.soarabq.org/` link (index, schedule) is out of scope. |
 | Deploy tooling | `deploy.py` excludes every dotfile from the deploy set (`is_deploy_path`) and from remote-only reporting/deletion (`is_managed_remote_path`), so today `.htaccess` is neither uploaded nor ever deleted. The server manifest exists (deployed 2026-09-21 by `jam@Mika`), so Step 0's first live run has happened and deploys are incremental. |
+| Co-hosting (added at review, 2026-10-12) | The site is a subdirectory of the `www.mcneilco.com` document root: `http://www.mcneilco.com/f3l_series/` serves the F3L home page (`65.254.248.220`, title "F3L Contest Series - Home"). So `/f3l_series/.htaccess` is reached through **two** hosts: the F3L vhost (where `REQUEST_URI` is `/schedule.html`) and the mcneilco.com vhost (where it is `/f3l_series/schedule.html`). The mcneilco.com pages themselves are above that directory and are not governed by the file. `www.mcneilco.com` shows the same `*.bizland.com` wildcard on 443, no `http://` references on its home page, and its own site is not in this repo (source `~/Projects/JMCo/mcneilco.com`, last published 2018). |
+| Front cache (added at review, 2026-10-12) | Both hosts answer with `Cache-Control: max-age=3600` and an `Age:` header from Newfold's front proxy, so a freshly uploaded redirect can be masked by a cached 200 for up to an hour. |
 
 The `*.bizland.com` wildcard on the site's own IP is the significant fact: it is Newfold's shared SSL front end. Enabling a domain certificate there is a panel action that provisions and renews on the platform; there is no server we configure.
 
@@ -38,6 +40,7 @@ John, at the certificate gate:
 1. Sign in to the hosting control panel for the `mcneilco.com` account (FatCow vDeck, or its Network Solutions successor).
 2. Find the SSL page. Likely names: **Security → SSL Certificates**, **Free SSL**, **SSL Manager**, or "Manage SSL" beside the domain in the domains list. `f3lcontestseries.org` is an add-on/pointed domain mapped to `/f3l_series`; pick that domain, not `mcneilco.com`.
 3. Enable the free certificate for `f3lcontestseries.org`. FatCow's docs say it covers the domain and its subdomains, so `www` is included; if the panel asks, select both.
+   While on the same page, enable the free certificate for `mcneilco.com` as well (ruling of 2026-10-12). It is additive: plain HTTP on mcneilco.com keeps working exactly as today and nothing in this repo redirects that site. Do **not** switch on any "Force HTTPS" toggle for either domain; on a co-hosted account such a toggle may be account-wide. The mcneilco.com redirect and link work is a separate piece of work outside this repo.
 4. Wait for issuance (minutes to an hour), then check from any terminal, without `-k`:
 
    ```sh
@@ -47,7 +50,7 @@ John, at the certificate gate:
      | openssl x509 -noout -subject -issuer -dates -ext subjectAltName
    ```
 
-   Expected: subject/SAN naming `f3lcontestseries.org` and `www.f3lcontestseries.org`, issuer Let's Encrypt (or whatever CA the panel uses), not `*.bizland.com`.
+   Expected: subject/SAN naming `f3lcontestseries.org` and `www.f3lcontestseries.org`, issuer Let's Encrypt (or whatever CA the panel uses), not `*.bizland.com`. Run the first `curl` line against `https://www.mcneilco.com/` too and expect the same.
 5. Note, for the ledger: the panel page's name, whether it shows an expiry or a "renews automatically" statement, and whether an email address receives renewal notices. If the panel shows a **Force HTTPS** / "Redirect to HTTPS" toggle, leave it **off**: the redirect comes from the repo (§ Redirect) so it is versioned and testable; turning both on is harmless but pointless.
 
 Renewal: Newfold-issued free certificates are 90-day certificates renewed by the platform. The gate confirms the panel says so; if it instead shows a manual "renew" action, that is recorded and the ledger entry says when the next renewal is due.
@@ -68,25 +71,37 @@ New tracked file `.htaccess` at the repo root, published to `/f3l_series/.htacce
 
 ```apache
 # HTTPS on the canonical host. Deployed by deploy/deploy.py; see deploy/README.md.
+# This directory is also reachable as www.mcneilco.com/f3l_series/, so every
+# rule is scoped by host; nothing here may touch the mcneilco.com site.
 RewriteEngine On
 
 # 1. Bare domain -> www (either scheme).
 RewriteCond %{HTTP_HOST} ^f3lcontestseries\.org$ [NC]
 RewriteRule ^ https://www.f3lcontestseries.org%{REQUEST_URI} [R=301,L]
 
-# 2. Plain HTTP -> HTTPS. Both conditions must hold, so this cannot loop
-#    whether the front end reports TLS through HTTPS or X-Forwarded-Proto.
+# 2. Plain HTTP -> HTTPS, on the site's own host only. Both TLS conditions
+#    must hold, so this cannot loop whether the front end reports TLS
+#    through HTTPS or X-Forwarded-Proto.
+RewriteCond %{HTTP_HOST} ^(www\.)?f3lcontestseries\.org$ [NC]
 RewriteCond %{HTTPS} !=on
 RewriteCond %{HTTP:X-Forwarded-Proto} !=https
 RewriteRule ^ https://www.f3lcontestseries.org%{REQUEST_URI} [R=301,L]
+
+# 3. The co-hosted path www.mcneilco.com/f3l_series/... -> the canonical site.
+#    Per-directory rewriting strips the directory prefix, so $1 is the path
+#    relative to this folder; the query string is passed through by default.
+RewriteCond %{HTTP_HOST} ^(www\.)?mcneilco\.com$ [NC]
+RewriteRule ^(.*)$ https://www.f3lcontestseries.org/$1 [R=301,L]
 ```
 
 Why this shape:
+- **Every rule carries a host condition** (ruling of 2026-10-12). Without one on rule 2, a visitor at `http://www.mcneilco.com/f3l_series/x` would be sent to `https://www.f3lcontestseries.org/f3l_series/x`, a 404, because `REQUEST_URI` there carries the `/f3l_series` prefix. Rule 3 handles that path on purpose instead, with the prefix stripped. Any other host that reaches this directory falls through untouched.
 - Newfold sites sit behind a proxy (the `X-Request-ID` header). On such hosts `%{HTTPS}` is sometimes `off` for TLS requests and only `X-Forwarded-Proto: https` tells the truth. Requiring **both** to say "not HTTPS" before redirecting means a TLS request is never redirected again, whichever variable the platform sets. The only failure mode is "neither is set for a TLS request", which the closing task's curl checks would show as a 301-to-self, with the rollback below.
 - `%{REQUEST_URI}` keeps the path and query, so deep links and the manifest URL survive.
 - 301 (permanent) is what search engines and browsers should learn. Browsers cache 301s, so the closing task tests with curl, not a browser, and rollback (below) may leave a tester's browser redirecting until its cache clears.
 - Rule 1 makes `https://www.…` the single canonical form (spec § Assumptions). Strike it at review to leave the bare domain as a second HTTPS name.
 - No HSTS. Add `Header always set Strict-Transport-Security "max-age=…"` in a later step once HTTPS has run cleanly.
+- `RewriteEngine On` in this directory stops any rewrite rules in a parent `.htaccess` (the account root, which is the mcneilco.com document root) from applying to F3L requests; mod_rewrite does not inherit by default. Nothing is known to be there. The closing task reads the account root over FTP before publishing (§ Verification, step 1) and, if a root `.htaccess` with `RewriteRule` lines exists, adds `RewriteOptions Inherit` under `RewriteEngine On` so those rules keep running after ours.
 
 `.htaccess` cannot be previewed by `deploy/preview.sh` (Python's `http.server` ignores it); it is only testable live, which is why the closing task publishes and checks in one run.
 
@@ -115,17 +130,20 @@ No change to credentials, manifest format, FTP code or the CLI. `deploy/README.m
 Runs on a machine with `~/.config/f3l-series-website/deploy.env` (Bishop or John's Mac). In order:
 
 1. **Certificate live?** `curl -sSI https://www.f3lcontestseries.org/` (no `-k`) must return 200 and `openssl x509` must show the site's name in the SAN list. If not, stop **blocked** with the openssl output in the hand-off; do not upload. This is the guard that keeps the redirect from going live before the certificate.
+   **Account root `.htaccess`?** Over the same FTP credentials, list the directory one level above the remote dir (the account root, which is the mcneilco.com document root; `ftplib` `MLSD` or `NLST` on `/`). Read only. If it holds a `.htaccess`, download it to a scratch location (never into the repo) and read it: if it contains `RewriteRule` lines, add `RewriteOptions Inherit` to the repo's `.htaccess` directly under `RewriteEngine On` and commit before step 2; record what was found in the output notes either way.
 2. `python3 -m unittest discover -s deploy/tests` → OK.
 3. `deploy/deploy.py` dry run: expect `.htaccess` new, 8 pages changed, nothing else; record the plan.
 4. Commit anything outstanding, then `deploy/deploy.py --upload`.
-5. Live checks, all with curl (`-sSI`, `-o /dev/null -w '%{http_code} %{redirect_url}\n'`):
+5. Live checks, all with curl (`-sSI`, `-o /dev/null -w '%{http_code} %{redirect_url}\n'`). **The front proxy caches for an hour** (§ Facts), so append a cache-busting query string that changes per attempt (for example `?v=<commit>-<attempt>`) to every URL below; the redirect rules pass the query string through, so the expected `Location` carries it too. A 200 from an un-busted URL within the hour after upload is a stale cache hit, not a failure.
    - `http://www.f3lcontestseries.org/` → 301 → `https://www.f3lcontestseries.org/`
    - `http://www.f3lcontestseries.org/schedule.html` → 301 → `https://www.f3lcontestseries.org/schedule.html` (path preserved)
    - `http://f3lcontestseries.org/` and `https://f3lcontestseries.org/postal.html` → 301 → the `www` https form
    - `https://www.f3lcontestseries.org/` → 200 with **no** `Location` header (no loop); `curl -L --max-redirs 3` on the http form lands on 200.
    - every page over https → 200; `grep -c 'http://' ` on each fetched page finds only the external soarabq link and the w3.org SVG namespace.
    - `https://www.f3lcontestseries.org/.f3l-deploy-manifest.json` shows the step's final commit.
-6. If step 5 shows a redirect loop or any non-200 page: roll back per § Redirect (comment the rules out, commit, `--upload`), re-check, and stop **blocked** with the curl output.
+   - **mcneilco.com untouched:** `http://www.mcneilco.com/` and `http://mcneilco.com/` → 200, no `Location`, title still "John McNeil and Co., Inc."; `http://www.mcneilco.com/acas.html` → 200.
+   - **co-hosted path:** `http://www.mcneilco.com/f3l_series/` → 301 → `https://www.f3lcontestseries.org/` and `http://www.mcneilco.com/f3l_series/schedule.html` → 301 → `https://www.f3lcontestseries.org/schedule.html` (prefix stripped, not duplicated).
+6. If step 5 shows a redirect loop, a 500, any non-200 page, or **any change to the mcneilco.com responses**: roll back per § Redirect (comment the rules out, commit, `--upload`), re-check with fresh cache-busters, and stop **blocked** with the curl output. Do not roll back on a plain 200 from a URL without a cache-buster.
 7. A second dry run reports nothing to send.
 8. Ledger: two lines under "Repo and runtime": the certificate route actually taken and where it renews (from the gate's comment), and "the site's only server configuration is the tracked `.htaccess`, published by `deploy.py` as the one dotfile in the deploy set". Output notes, commit.
 
@@ -133,7 +151,7 @@ Runs on a machine with `~/.config/f3l-series-website/deploy.env` (Bishop or John
 
 | Path | Status | Change |
 |---|---|---|
-| `.htaccess` | new | the two redirect rules |
+| `.htaccess` | new | the three host-scoped redirect rules |
 | `index.html`, `schedule.html`, `results.html`, `postal.html`, `about.html`, `howto.html`, `host.html`, `highstart.html` | edit | footer self-link → `https://…/` |
 | `README.txt` | edit | `.htaccess` in the structure list |
 | `deploy/deploy.py` | edit | `DEPLOY_ROOT_DOTFILES`, `is_deploy_path`, `upload_order` |
@@ -147,15 +165,15 @@ Runs on a machine with `~/.config/f3l-series-website/deploy.env` (Bishop or John
 
 1. **Teach `deploy.py` to publish a root `.htaccess`** — `DEPLOY_ROOT_DOTFILES`, `is_deploy_path`, `upload_order` last, the tests in § Deploy tooling change, `deploy/README.md` wording. Run the suite, commit. Size: 3 files, ~15 min.
 2. **Add `.htaccess`, switch the footer self-link on all 8 pages, `README.txt` line** — the file from § Redirect verbatim; `sed`-style edit of the one footer href per page; dry run to confirm the plan is `.htaccess` new + 8 changed; commit. **No `--upload`.** Size: 10 files, ~15 min.
-3. **`[needs-you]` Certificate gate** — John enables the certificate per § Certificate (route A, else B1) and confirms with the curl/openssl checks; his comment on the gate's task card records the panel page name and the renewal statement for the ledger.
-4. **Closing: verify certificate, publish, verify redirects, ledger, notes** — § Verification and publish, steps 1–8. Stops blocked without uploading if the certificate is not live. Size: 2 files (ledger, notes) plus the upload, ~15 min.
+3. **`[needs-you]` Certificate gate** — John enables the certificate for `f3lcontestseries.org` and, on the same visit, for `mcneilco.com`, per § Certificate (route A, else B1), and confirms with the curl/openssl checks; his comment on the gate's task card records the panel page name and the renewal statement for the ledger.
+4. **Closing: verify certificate, read the account root, publish, verify redirects and mcneilco.com, ledger, notes** — § Verification and publish, steps 1–8. Stops blocked without uploading if the certificate is not live. Size: 2 files (ledger, notes), possibly one `RewriteOptions Inherit` line, plus the upload, ~20 min.
 
 Checklist names as they should appear on the step card, after this task's item:
 1. `[needs-you] Review the design and plan`
 2. `Teach deploy/deploy.py to publish a root .htaccess (deploy set, uploaded last, tests, deploy/README.md)`
 3. `Add .htaccess with the HTTPS and www redirect, switch the footer self-link on all 8 pages to https://, add the README.txt line; dry run and commit, no upload`
-4. `[needs-you] Enable the certificate for f3lcontestseries.org in the hosting control panel (design § Certificate, route A else B1) and confirm https://www.f3lcontestseries.org/ loads with no warning`
-5. `Closing: confirm the certificate is live, run tests and dry run, publish with deploy.py --upload, verify the redirects and every page over HTTPS, ledger lines, notes, commit`
+4. `[needs-you] Enable the free certificate for f3lcontestseries.org and for mcneilco.com in the hosting control panel (design § Certificate, route A else B1; no Force-HTTPS toggle) and confirm https://www.f3lcontestseries.org/ loads with no warning`
+5. `Closing: confirm the certificate is live, run tests and dry run, publish with deploy.py --upload, verify the redirects and every page over HTTPS, ledger lines, notes, commit` (the mcneilco.com checks and the cache-busting are in the design § Verification; the item name was left as is)
 6. `[needs-you] Merge the branch into main (task-dispatcher merge-step RbsRQzYp), then try the new functions yourself`
 
 The pre-existing item `Confirm the hosting provider and control-panel access … note which certificate options it offers [needs-you]` cannot be moved by this task, so it will sit **after** item 6. Its substance is answered by the review (item 1, where John confirms the FatCow identification) and item 4 (where the option offered is used). John can tick it at either point; see § Open decisions.
@@ -164,10 +182,16 @@ The pre-existing item `Confirm the hosting provider and control-panel access …
 
 (none — no task touches task-dispatcher, trello-automation or any MCP server; only site files, `deploy/`, docs and the ledger.)
 
-## Open decisions
+## Decisions at review (2026-10-12)
 
-- **Checklist order.** The pre-existing `[needs-you] Confirm the hosting provider…` item lands after the merge/try item because existing items are never reordered. The certificate gate (item 4) is where that confirmation is actually used. Either tick the old item when you do item 4, or move it yourself; the design assumes nothing about its position.
-- **Who runs `--upload`.** The closing worker publishes, because it verifies the certificate and the redirects in the same run. Say at review if you would rather run `deploy/deploy.py --upload` yourself in the try item; then task 4 stops after its dry run and the try item's checklist carries § Verification steps 5–7.
-- **Bare domain → www (rule 1).** Included so there is one canonical HTTPS address. Strike it if you want `https://f3lcontestseries.org/` to serve directly (the free certificate should cover both names either way).
-- **Panel "Force HTTPS" toggle.** If the panel offers one, the design leaves it off and uses the repo's `.htaccess`. Say if you prefer the toggle; then task 2 ships no `.htaccess` and task 1 is unnecessary.
-- **Canonical tags and HSTS.** Neither is added (spec § Assumptions). Say if you want `<link rel="canonical">` on each page (one line per page, task 2) or a short-max-age HSTS header (one line in `.htaccess`).
+John reviewed the design on 2026-10-12 and approved it with the changes now folded into the sections above. No open decisions remain.
+
+- **Co-hosting constraint (new).** `www.mcneilco.com` is served from the parent of this site's directory and must not break. Every redirect rule is scoped by host, the co-hosted `/f3l_series/` path redirects to the canonical site with its prefix stripped (rule 3), and the closing task checks mcneilco.com's own responses before and after the publish and rolls back on any change to them.
+- **Same upgrade for mcneilco.com.** The free certificate is enabled for `mcneilco.com` at the same panel visit as the F3L one (additive, HTTP unaffected). Its own HTTPS redirect and link changes are outside this repo and this step; they are separate work.
+- **Front cache.** Live checks use cache-busting query strings and never treat a stale cached 200 as a failure.
+- **Parent `.htaccess`.** The closing task reads the account root over FTP first and adds `RewriteOptions Inherit` only if a root `.htaccess` has rewrite rules.
+- **Checklist order.** The pre-existing `[needs-you] Confirm the hosting provider…` item stays after the merge/try item; John ticks it when he does the certificate gate.
+- **Who runs `--upload`.** The closing worker publishes, as designed.
+- **Bare domain → www (rule 1).** Kept.
+- **Panel "Force HTTPS" toggle.** Left off for both domains; the redirect lives in the repo.
+- **Canonical tags and HSTS.** Neither in this step, as designed.
