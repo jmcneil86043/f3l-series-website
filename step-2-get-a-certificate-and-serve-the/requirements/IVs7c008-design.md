@@ -37,7 +37,7 @@ The `*.bizland.com` wildcard on the site's own IP is the significant fact: it is
 
 John, at the certificate gate:
 
-1. Sign in to the hosting control panel for the `mcneilco.com` account (FatCow vDeck, or its Network Solutions successor).
+1. Sign in to the hosting control panel for the `mcneilco.com` account. Per John's Bear note "setting up web hosting on fatcow" (2026-02-13, `#TPG/F3LSeries`), FatCow is now **iPage**: the login is `https://secure.ipage.com/secure/login.html`, 1Password item `IPage` (vault `Personal`, user `jmcneil`). iPage is the same Newfold vDeck panel; an older `secure.fatcow.com` keychain item also exists. The note also records that `f3lcontestseries.org` was added as a pointed domain (Domain settings → Pointer & Subdomains) mapped to the `F3l_series` folder without transferring registration.
 2. Find the SSL page. Likely names: **Security → SSL Certificates**, **Free SSL**, **SSL Manager**, or "Manage SSL" beside the domain in the domains list. `f3lcontestseries.org` is an add-on/pointed domain mapped to `/f3l_series`; pick that domain, not `mcneilco.com`.
 3. Enable the free certificate for `f3lcontestseries.org`. FatCow's docs say it covers the domain and its subdomains, so `www` is included; if the panel asks, select both.
    While on the same page, enable the free certificate for `mcneilco.com` as well (ruling of 2026-10-12). It is additive: plain HTTP on mcneilco.com keeps working exactly as today and nothing in this repo redirects that site. Do **not** switch on any "Force HTTPS" toggle for either domain; on a co-hosted account such a toggle may be account-wide. The mcneilco.com redirect and link work is a separate piece of work outside this repo.
