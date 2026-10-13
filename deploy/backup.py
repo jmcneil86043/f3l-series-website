@@ -84,12 +84,15 @@ def set_mtime(path, modify):
 def download(ftp, rpath, local, size, modify):
     local.parent.mkdir(parents=True, exist_ok=True)
     part = local.with_name(local.name + PART_SUFFIX)
-    with open(part, "wb") as fh:
-        ftp.retrbinary(f"RETR {rpath}", fh.write)
-    got = part.stat().st_size
-    if size >= 0 and got != size:
-        part.unlink()
-        raise OSError(f"short download: expected {size} bytes, got {got}")
+    try:
+        with open(part, "wb") as fh:
+            ftp.retrbinary(f"RETR {rpath}", fh.write)
+        got = part.stat().st_size
+        if size >= 0 and got != size:
+            raise OSError(f"short download: expected {size} bytes, got {got}")
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
     part.replace(local)
     set_mtime(local, modify)
 
