@@ -59,6 +59,25 @@ Nothing in §2 can be delegated, and most of it has to happen before any worker 
 
 D1 and D2 are the gate. D3–D6 can be answered in the same pass; they are small.
 
+### 2.5 Decisions taken at the review gate (John, 2026-10-15)
+
+Recorded here so the migration cards (§16) are written for the plans actually chosen. The two
+host choices are also ledger lines in `decisions/F3L-Series-Web-Site-decisions.md`.
+
+| # | Decision |
+|---|---|
+| **D1** | **Plan B — GitHub Pages.** The site is run by a committee as well as John and may outlive his involvement; a GitHub repo is the easiest thing to hand a successor, with no host credential to hand over. `deploy/preview.sh` plus `git diff` before the push is the dry run (the R6 trade in `comparison.md` §6 is accepted). The Cloud DNS apex ALIAS Plan A relied on is a Preview feature, which settled it. Publish from the `gh-pages` branch per §7.1, never the root of `main`. Plan A is not executed |
+| **D2** | **AWS S3 + CloudFront + ACM, but not Plan C as written.** The site is hosted in the **ShadowStream AWS account** (mcneilco.com documents the open-source ACAS, and ShadowStream is its most direct owner; it is John's own company, not a client). The **zone stays at Network Solutions** — primary management of the domain stays personal because the family's email lives there. Cutover is Plan C's Move 1 only: `www` CNAME to the distribution; the bare name uses **Network Solutions web forwarding** to `https://www.mcneilco.com`, which is HTTP-only, so `https://mcneilco.com` keeps failing exactly as today — a partial pass on R3 John accepts. **Move 2 (the nameserver change, §8.2 steps 12–16) and the Route 53 zone (§8.1 step 5 and the step 6 mail gate) are not executed.** The ACM validation CNAME goes in the Network Solutions zone and stays there. Plan D is not executed |
+| **D3** | No new AWS account. F3L needs none (Plan B); mcneilco.com uses the existing ShadowStream account, with the bucket-scoped deploy user of §4.4 and the $5 billing alarm of §2.2. Hosting and DNS deliberately sit in different hands |
+| **D4** | **The F3L repo goes public.** Read-only to the world, writes stay with collaborators. The decisions ledger and step folders become readable as repository files; John accepts that. No GitHub Pro |
+| **D5** | Open. Recommendation unchanged: push `~/Projects/JMCo/mcneilco.com-site` to a private GitHub repo under `jmcneil86043`. The payload is settled: **177 files, 74,309,246 bytes** (measured on Mika 2026-10-15), which closes §15 item 5 |
+| **D6** | Open; the 3600 s recommendation stands unless John says otherwise on cutover day |
+
+Consequences for the rest of this document: §6 (Plan A), §8.1 steps 5–6 and §8.2 Move 2 (Plan C's
+zone move) and §9 (Plan D) are reference only. §2.3's Network Solutions check — can the DNS manager
+replace the `www` A record with a CNAME — is now on the critical path for mcneilco.com, and the
+web-forwarding setting for the bare name joins it. §15 item 2 (the Cloud DNS ALIAS) is moot.
+
 ### 2.2 Accounts, billing and credentials
 
 Per plan. Do these in order within a plan; they are its step 1 in every case.

@@ -345,8 +345,10 @@ Verified by `dig` against 8.8.8.8 on 2026-10-15. All the card's facts confirmed;
 
 - **Bare-domain apex.** Both apexes are A records, and a CNAME at the apex is illegal. Any host
   reached by hostname rather than fixed IP needs either ALIAS/ANAME support at the apex or the
-  provider's own DNS. **Google Cloud DNS has no ALIAS/ANAME record type.** So for F3L, "leave DNS in
-  place" and "put the apex on a CDN hostname" cannot both hold — the comparison must say, per
+  provider's own DNS. ~~**Google Cloud DNS has no ALIAS/ANAME record type.**~~ *Corrected at the
+  2026-10-15 review gate: Cloud DNS does offer an ALIAS record at the apex (public zones, DNSSEC off,
+  gcloud/API only), but Google's record reference marks it **Preview**, not generally available —
+  see `comparison.md` §1 and `migration-plan.md` §6.3.* The comparison must still say, per
   candidate, whether the apex works with the zone where it is. Network Solutions' DNS should be
   checked for ALIAS support the same way; assume it has none until shown otherwise.
 - **An easy out.** Since the bare domain only has to **redirect** to www (R3), the apex does not
