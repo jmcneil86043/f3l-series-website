@@ -35,7 +35,8 @@ File Organization Tips:
 Preview and Deploy:
 -------------------
 Preview a checkout locally with deploy/preview.sh, and publish to the live site with
-deploy/deploy.py (a dry run unless you pass --upload). Setup, usage and the
+deploy/deploy.py (a dry run unless you pass --upload). deploy/backup.py downloads a
+safety copy of the whole FTP account. Setup, usage and the
 credentials file are described in deploy/README.md.
 
 Questions?
