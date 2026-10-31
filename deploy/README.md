@@ -129,6 +129,25 @@ curl -s http://www.f3lcontestseries.org/.f3l-deploy-manifest.json | head
 - The host only offers plain FTP (`AUTH TLS` is refused), so the password crosses the network in
   the clear, just as it did with the VS Code sync.
 
+## Safety copy of the whole account
+
+`deploy/backup.py` mirrors the FTP account into a local folder. It uses the same credentials as
+deploy.py and never writes to the server. By default it copies everything from `/`: the
+mcneilco.com pages, `f3l_series/`, `stats/`, `Maildir/` and the rest.
+
+```sh
+deploy/backup.py --list                              # list the remote files and totals only
+deploy/backup.py                                     # mirror / into ../ftp-backup-<today>
+deploy/backup.py --dest ~/Backups/mcneilco-ftp       # choose the folder
+deploy/backup.py --remote-dir /f3l_series --dest P   # just the F3L site
+```
+
+Each file lands as `<name>.part` and is renamed when complete, with its server modification time.
+Running again into the same `--dest` resumes: files already present with the same size are
+skipped. A `backup-log.txt` in the folder records every run and any file the server refused.
+Exit code 1 means at least one file failed; the log lists them. Keep backup folders outside the
+repo (the default puts them beside it) so they are never committed or deployed.
+
 ## Tests
 
 ```sh
