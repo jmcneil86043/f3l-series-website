@@ -34,10 +34,11 @@ File Organization Tips:
 
 Preview and Deploy:
 -------------------
-Preview a checkout locally with deploy/preview.sh, and publish to the live site with
-deploy/deploy.py (a dry run unless you pass --upload). deploy/backup.py downloads a
-safety copy of the whole FTP account. Setup, usage and the
-credentials file are described in deploy/README.md.
+Preview a checkout locally with deploy/preview.sh, and publish to GitHub Pages with
+deploy/deploy.py (a dry run unless you pass --upload). deploy/verify.sh runs the
+migration plan's §11 checks against the live site; deploy/backup.py downloads a
+safety copy of the old FTP account. Setup, usage and the settings file are
+described in deploy/README.md.
 
 Questions?
 ----------

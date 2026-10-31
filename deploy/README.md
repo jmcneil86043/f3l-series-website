@@ -1,15 +1,17 @@
 # Preview and deploy
 
-Two tools for the F3L Contest Series site (www.f3lcontestseries.org). Both work from any checkout
-or worktree with no arguments. They need Python 3.9+ and nothing else.
+Three tools for the F3L Contest Series site (www.f3lcontestseries.org). All work from any
+checkout or worktree with no arguments. `deploy.py` needs Python 3.9+ and git; `verify.sh`
+needs curl, openssl and dig; nothing else.
 
 - `deploy/preview.sh`: serves this checkout on localhost so you can look at it before it goes live.
-- `deploy/deploy.py`: publishes the site over FTP and sends only the files that changed. By
-  default it does a **dry run**: it prints the plan and sends nothing.
+- `deploy/deploy.py`: publishes the site to GitHub Pages and sends only the files that changed.
+  By default it does a **dry run**: it prints the plan and pushes nothing.
+- `deploy/verify.sh`: runs the migration plan's §11 checks against the live site.
 
-These replace the VS Code upload-on-save sync (`smartftp.json`). The deploy runs from Bishop or
-John's Mac, started by hand or by a step worker. No GitHub Action is involved; the reason is in
-`decisions/F3L-Series-Web-Site-decisions.md` § Repo and runtime.
+These replace the VS Code upload-on-save sync (`smartftp.json`) and the old FTP deploy. The
+deploy runs from Bishop or John's Mac, started by hand or by a step worker. No GitHub Action
+is involved; the reason is in `decisions/F3L-Series-Web-Site-decisions.md` § Repo and runtime.
 
 ## Preview
 
@@ -29,72 +31,52 @@ worktree, then forward the port:
 ssh -L 8080:127.0.0.1:8080 bishop     # leave this open
 ```
 
-Then open http://localhost:8080/ on the Mac. The server only listens on 127.0.0.1, so the tunnel
-is the only way in. (VS Code Remote-SSH forwards the port automatically when the preview starts
-in its terminal.)
-
-## First-time setup on the deploying machine
-
-Do this once per machine that will deploy. The file lives outside the repo, so every worktree
-shares it and it can't be committed.
-
-```sh
-mkdir -p ~/.config/f3l-series-website
-cp deploy/deploy.env.example ~/.config/f3l-series-website/deploy.env
-chmod 600 ~/.config/f3l-series-website/deploy.env
-```
-
-Edit it and set **one** of:
-
-- `F3L_FTP_PASSWORD=` followed by the FTP password (the `password` in your local `smartftp.json`), or
-- `F3L_FTP_PASSWORD_OP_REF=op://<vault>/<item>/password`, a 1Password reference. The deploy runs
-  `op read` on it, so the 1Password CLI must be installed and signed in on that machine. Check
-  it with `op read "op://<vault>/<item>/password"` first.
-
-Host `ftp.mcneilco.com`, user `jmcneil` and remote dir `/f3l_series` are the defaults, so you only
-need to set them if they change.
-
-For each setting, deploy.py uses the first source that has it:
-
-1. the process environment (`F3L_FTP_HOST`, `F3L_FTP_USER`, `F3L_FTP_PASSWORD`, `F3L_FTP_REMOTE_DIR`, `F3L_FTP_PASSWORD_OP_REF`);
-2. the env file: `--env PATH`, else `$F3L_DEPLOY_ENV`, else `~/.config/f3l-series-website/deploy.env`;
-3. for the password only, `op read` on `F3L_FTP_PASSWORD_OP_REF`;
-4. the defaults above (never the password).
-
-The script reads the env file as `KEY=value` lines and never runs it through a shell. It warns if
-other users can read the file. It never prints the password, writes it to disk or passes it on a
-command line. A `deploy/deploy.env` inside the repo is gitignored as a backstop, but keep the real
-file in `~/.config`.
+Then open http://localhost:8080/ on the Mac. The server only listens on 127.0.0.1, so the
+tunnel is the only way in. (VS Code Remote-SSH forwards the port automatically when the
+preview starts in its terminal.)
 
 ## Deploy
 
 ```sh
-deploy/deploy.py                          # dry run: show the plan, send nothing
-deploy/deploy.py --upload                 # publish new and changed files
+deploy/deploy.py                          # dry run: show the plan, push nothing
+deploy/deploy.py --upload                 # publish the changed tree to gh-pages
 ```
 
-A dry run connects and reads the server, then prints every file under one of these headings:
+A dry run fetches `origin/gh-pages` and prints every file under one of these headings:
 
-- **New**: not on the server yet, or not in the server's manifest
-- **Changed**: its content differs from what was last deployed, or someone changed it on the server since
+- **New**: not on gh-pages yet
+- **Changed**: its content differs from what was last deployed (git blob id, so byte-exact)
 - **Unchanged**: skipped
-- **Remote-only**: on the server but not in the repo; left alone unless you pass `--delete`
+- **Remote-only**: on gh-pages but not in the repo; left alone unless you pass `--delete`
 
-Totals follow. Run the dry run, read it, then run the same command with `--upload`.
+Totals follow, then `Last deploy:` parsed from the gh-pages tip's commit trailers (which
+source commit, who, when, dirty or clean, how many files). If nothing changed it just says
+`Nothing to do.` Run the dry run, read it, then run the same command with `--upload`.
 
 Other flags:
 
 | Flag | Effect |
 |---|---|
-| `--force` | re-send every file and rebuild the manifest |
-| `--delete` | also delete remote-only files (never directories, never dotfiles such as `.htaccess`) |
-| `--allow-dirty` | allow `--upload` when site files have uncommitted changes |
+| `--force` | a new commit even when the tree is unchanged, so Pages rebuilds |
+| `--delete` | also delete remote-only files |
+| `--allow-dirty` | allow `--upload` when site files have uncommitted changes (recorded as `Source-Dirty: true`) |
 | `--env PATH` | use this env file |
-| `--verbose` | log the FTP commands (ftplib masks the password) |
+| `--verbose` | log the git commands |
 
-Exit codes: 0 means success, including a dry run. 1 means an FTP failure. 2 means a usage
-problem: missing password, bad env file, uncommitted site files, or a remote dir that doesn't
-exist.
+Exit codes: 0 means success, including a dry run. 1 means a git failure: the remote can't be
+reached, or the push was rejected as non-fast-forward — someone else published in between;
+fetch and re-run. 2 means a usage problem: bad env file, uncommitted site files on
+`--upload`, no site files, no remote, or a remote whose URL isn't a GitHub URL — the script
+will only ever publish to GitHub.
+
+### The live check
+
+After the plan, the script GETs every deploy-set path on the live site and compares the body
+to the local content (UA `f3l-deploy/2`, 20 s timeout). It reports
+`Live: matches origin/gh-pages`, `Live: N files differ…`, or `Live: not checked: <reason>`.
+Informational only: it never changes the exit code and never blocks a push. Before the DNS
+cutover it says `not checked`, because the old host's certificate is not valid for this name;
+a minute or two after a push it confirms the Pages build has landed.
 
 ### What gets published
 
@@ -102,51 +84,91 @@ exist.
 - `styles.css`
 - everything under `assets/`
 
-Nothing whose name starts with `.` is published. Everything else stays local: `README.txt`,
-`deploy/`, `decisions/`, step folders and `smartftp.json`. The list is at the top of `deploy.py`.
+31 files. On every push the script also writes `.nojekyll` (empty) and `CNAME`
+(`www.f3lcontestseries.org`), so a push can never drop the custom domain or the Jekyll
+opt-out. Nothing whose name starts with `.` is published from the repo; everything else stays
+local: `README.txt`, `deploy/`, `decisions/`, step folders. The list is `is_deploy_path()`
+at the top of `deploy.py`.
 
-### How it decides what changed
+### Settings (optional, no secret)
 
-Git gives files fresh timestamps, and FTP has no checksum command. So the script keeps its own
-manifest on the server at `/f3l_series/.f3l-deploy-manifest.json`. The manifest records each
-file's sha256 and size, plus the commit, the time, who deployed, and whether the tree was dirty.
-It is also the audit trail. To see what is live:
+The repo's own push access is the deploy credential; there is no password. All four keys are
+optional — the defaults are correct:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `F3L_PAGES_REMOTE` | `origin` | the remote to push `gh-pages` to |
+| `F3L_PAGES_BRANCH` | `gh-pages` | the branch Pages serves from |
+| `F3L_SITE_DOMAIN` | `www.f3lcontestseries.org` | the `CNAME` content |
+| `F3L_SITE_URL` | `https://www.f3lcontestseries.org` | the base the live check GETs |
+
+Precedence: process environment → env file → default. The env file is `--env PATH`, else
+`$F3L_DEPLOY_ENV`, else `~/.config/f3l-series-website/deploy.env` — all optional, parsed as
+`KEY=value`, never sourced by a shell. The old `deploy.env` on Bishop (with the FTP
+password) is simply ignored — its `F3L_FTP_*` keys are unknown — and can be deleted any time.
+
+### What is live
 
 ```sh
-curl -s http://www.f3lcontestseries.org/.f3l-deploy-manifest.json | head
+git fetch origin gh-pages && git log -3 origin/gh-pages
 ```
 
-### Safety
+Each publish commit's trailers are the audit record (`Source-Commit`, `Source-Dirty`,
+`Deployed-By`, `Deployed-At`, `Files: N (bytes)`). GitHub's build status for the branch is
+on the repo's Deployments page:
+https://github.com/jmcneil86043/f3l-series-website/deployments
 
-- Upload is opt-in. A command without `--upload` never changes the server.
+### The Pages setup that must stay
+
+- The repo is **public** (a GitHub Pages requirement).
+- The Pages source is the **`gh-pages` branch, root** — never the root of `main`.
+- Custom domain `www.f3lcontestseries.org`; Enforce HTTPS on, once the certificate is issued.
+- DNS (Google Cloud DNS, unchanged except these): four A records at the apex —
+  185.199.108.153, 185.199.109.153, 185.199.110.153, 185.199.111.153 — and `www` a CNAME to
+  `jmcneil86043.github.io.`. TTL 3600, lowered to 300 for the cutover window.
+- The MX and TXT (mailgun) records are never touched.
+
+The cutover itself and the decommissioning of the old host are later cards
+(`select-web-hosting/migration-plan.md` §5 and §13).
+
+## Safety
+
+- Publish is opt-in. A command without `--upload` never pushes.
 - `--upload` refuses when site files have uncommitted changes, so what ships matches a commit.
-- Each file goes up as `<name>.uploading` and is then renamed over the old one, so visitors never
-  get a half-sent page. Assets go first, then `styles.css`, then pages.
-- The manifest is written last. If a run fails partway, the old manifest stays, and the next run
-  re-sends whatever didn't finish.
-- The script won't create the remote dir. A mistyped `F3L_FTP_REMOTE_DIR` fails instead of
-  publishing to the wrong place.
-- The host only offers plain FTP (`AUTH TLS` is refused), so the password crosses the network in
-  the clear, just as it did with the VS Code sync.
+- Each publish is one whole-tree commit on `gh-pages`; if the push is rejected, nothing has
+  changed on the remote.
+- `.nojekyll` and `CNAME` are rewritten on every push, so a push can never drop the custom
+  domain or the Jekyll opt-out.
+- The published tree is only ever built from the deploy set — never from the root of `main`.
+- Nothing secret crosses the network: the credential is the repo's own push access.
 
-## Safety copy of the whole account
+## Verify
 
-`deploy/backup.py` mirrors the FTP account into a local folder. It uses the same credentials as
-deploy.py and never writes to the server. By default it copies everything from `/`: the
-mcneilco.com pages, `f3l_series/`, `stats/`, `Maildir/` and the rest.
+`deploy/verify.sh` runs the migration plan's §11 checks — one line per check,
+`ok` / `FAIL` / `info` / `skip`; exit 0 if nothing failed, 1 if any check failed, 2 on bad
+usage.
 
 ```sh
-deploy/backup.py --list                              # list the remote files and totals only
-deploy/backup.py                                     # mirror / into ../ftp-backup-<today>
-deploy/backup.py --dest ~/Backups/mcneilco-ftp       # choose the folder
-deploy/backup.py --remote-dir /f3l_series --dest P   # just the F3L site
+deploy/verify.sh                            # public run after the cutover: all 13 checks
+deploy/verify.sh --resolve 185.199.108.153  # pre-DNS: the www name forced at a Pages address
+deploy/verify.sh --base URL                 # another base: a fork's github.io URL, the old host
 ```
 
-Each file lands as `<name>.part` and is renamed when complete, with its server modification time.
-Running again into the same `--dest` resumes: files already present with the same size are
-skipped. A `backup-log.txt` in the folder records every run and any file the server refused.
-Exit code 1 means at least one file failed; the log lists them. Keep backup folders outside the
-repo (the default puts them beside it) so they are never committed or deployed.
+In the `--resolve` run the checks are aimed at the real SNI and Host, so routing is tested as
+a browser would see it; checks 6-7 are skipped (the public names still point at the old
+host) and 8 is reported for the eye, because the certificate is not issued until DNS points
+at Pages. With `--base`, checks 6-8 are judged only when the base is the real name.
+
+The by-eye checks (every page in a browser, the bulletin opening in Word, the F3XVault
+iframes rendering) live in the migration plan's hand-off, not in the script.
+
+## Safety copy of the old FTP account
+
+`deploy/backup.py` mirrors the old FTP account into a local folder; it stays for the final
+pre-decommissioning backup (migration plan §13.1). Note it is out of sync with the Pages
+rewrite: it still expects the FTP settings and `FTP_TIMEOUT` that the rewrite removed, so it
+needs updating before it can run. The old host is untouched until the decommissioning card,
+which owns that fix.
 
 ## Tests
 
@@ -154,19 +176,20 @@ repo (the default puts them beside it) so they are never committed or deployed.
 python3 -m unittest discover -s deploy/tests
 ```
 
-The tests use a fake FTP server and don't touch the network.
+The tests build a temp bare repository as the stand-in for GitHub and don't touch the
+network.
 
 ## Acceptance checklist (first live run)
 
-1. `deploy/preview.sh`, then open the site: every page loads, images show, and on "Host a Contest"
-   the bulletin template downloads.
-2. With no env file and no `F3L_FTP_*` variables, `deploy/deploy.py` exits 2 with a one-line
-   message about the missing password. It doesn't prompt.
-3. With the env file in place, `deploy/deploy.py` connects. The first time it says there is no
-   manifest and lists every file as new. Any remote-only leftovers are listed but not touched.
-4. `deploy/deploy.py --upload` sends everything and writes the manifest. The live site still renders.
-5. `deploy/deploy.py` again: 0 new, 0 changed.
-6. Edit one page, commit, and run `deploy/deploy.py --upload`. Only that page is sent, and the live
-   site shows the edit. A dry run straight afterwards shows nothing to send.
-7. `git log -p | grep -E '^\+F3L_FTP_PASSWORD=.'` finds nothing, and `git status` doesn't list
-   `smartftp.json`.
+1. `deploy/preview.sh`, then open the site: every page loads, images show, and on "Host a
+   Contest" the bulletin template downloads.
+2. `deploy/deploy.py` (dry run) lists every file as new — `gh-pages` doesn't exist yet — and
+   the live check says `not checked` (the old host's certificate is not valid for this name).
+3. `deploy/deploy.py --upload` pushes. `git ls-tree -r origin/gh-pages --name-only` lists 33
+   paths: the 31 site files, `.nojekyll`, `CNAME`. None of `decisions/`, `deploy/`,
+   `README.txt` or a step folder.
+4. `deploy/deploy.py` again: `Nothing to do.`
+5. Edit one page, commit, and run `deploy/deploy.py --upload`. The dry run before and after
+   shows exactly that one page changed and nothing else to send.
+6. The publish commit's trailers (`Source-Commit`, `Deployed-By`, …) agree with
+   `git log origin/gh-pages` and the repo's Deployments page.
