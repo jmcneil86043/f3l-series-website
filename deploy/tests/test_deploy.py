@@ -1,620 +1,651 @@
-"""Unit tests for deploy/deploy.py. No network: the FTP session is replaced by
-FakeRemote (for the deploy flow) or FakeFtp (for FtpRemote's own commands).
+#!/usr/bin/env python3
+"""Tests for deploy.py — the GitHub Pages publisher.
 
-Run from the repo root:  python3 -m unittest discover -s deploy/tests
+No network and no real remote: each CLI test builds a temp bare repository
+that stands in for the GitHub repo (a per-repo URL rewrite makes a
+GitHub-form remote URL resolve to the local bare path) plus a temp site
+checkout whose origin is that rewrite. The live-site check is always injected
+and by default refuses to connect. Run from the repo root:
+
+    python3 -m unittest discover -s deploy/tests
 """
 
 import contextlib
-import hashlib
 import io
-import json
-import shutil
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
-import unittest.mock
-from ftplib import error_perm, error_temp
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import deploy  # noqa: E402  (deploy/deploy.py)
 
-import deploy  # noqa: E402
+GITHUB_URL = "git@github.com:jmcneil86043/f3l-series-website.git"
+
+FILES = {
+    "index.html": b"<h1>home</h1>",
+    "about.html": b"<h1>about</h1>",
+    "styles.css": b"body { color: black; }",
+    "assets/wagon.jpg": b"JPG-WAGON",
+    "assets/highstart/image001.jpg": b"JPG-HIGH",
+    "assets/F3L contest bulletin template 2026 v1.1.doc": b"DOC-TEMPLATE",
+}
+TOTAL_BYTES = sum(len(v) for v in FILES.values())
 
 
-def write(root, rel, content):
-    path = Path(root) / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content if isinstance(content, bytes) else content.encode())
-    return path
+def run_git(cwd, args, input=None, env=None):
+    res = subprocess.run(["git", "-C", str(cwd), *args],
+                         capture_output=True, text=True, input=input, env=env, check=False)
+    if res.returncode != 0:
+        raise AssertionError(f"git {args} failed: {res.stderr}")
+    return res.stdout.strip()
+
+
+def git(cwd, *args):
+    return run_git(cwd, list(args))
 
 
 def make_site(root):
-    write(root, "index.html", "<h1>home</h1>")
-    write(root, "about.html", "<h1>about</h1>")
-    write(root, "styles.css", "body{}")
-    write(root, "assets/wagon.jpg", b"\xff\xd8jpeg")
-    write(root, "assets/highstart/image001.jpg", b"\xff\xd8hs")
-    write(root, "assets/F3L contest bulletin template 2026 v1.1.doc", b"doc")
+    """Write the six fixture files; returns them as {rel: bytes}."""
+    for rel, data in FILES.items():
+        path = Path(root) / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    return dict(FILES)
 
 
-class FakeRemote(deploy.Remote):
-    """In-memory server: files maps remote path -> bytes."""
-
-    def __init__(self, files=None, manifest=None, fail_on=None):
-        self.files = dict(files or {})
-        if manifest is not None:
-            self.files[deploy.MANIFEST_NAME] = json.dumps(manifest).encode()
-        self.fail_on = fail_on
-        self.dirs = set()
-        self.log = []
-        self.closed = False
-
-    def read_manifest(self):
-        data = self.files.get(deploy.MANIFEST_NAME)
-        return json.loads(data) if data is not None else None
-
-    def listing(self):
-        return {rel: len(data) for rel, data in self.files.items()}
-
-    def mkdir(self, rel_dir):
-        self.dirs.add(rel_dir)
-        self.log.append(("mkdir", rel_dir))
-
-    def upload(self, rel, local_path):
-        if rel == self.fail_on:
-            raise error_temp("451 transfer aborted")
-        self.files[rel] = Path(local_path).read_bytes()
-        self.log.append(("upload", rel))
-
-    def write_manifest(self, manifest):
-        self.files[deploy.MANIFEST_NAME] = json.dumps(manifest).encode()
-        self.log.append(("manifest",))
-
-    def delete(self, rel):
-        del self.files[rel]
-        self.log.append(("delete", rel))
-
-    def close(self):
-        self.closed = True
+def make_temp_site(base):
+    """(site, bare, files): a temp bare repo as the stand-in for GitHub and a
+    committed site checkout whose origin is a GitHub-form URL rewritten to it."""
+    base = Path(base)
+    bare = base / "origin.git"
+    site = base / "site"
+    subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=True)
+    git(bare, "config", "user.name", "Test")
+    git(bare, "config", "user.email", "test@example.com")
+    subprocess.run(["git", "init", "-q", str(site)], check=True)
+    git(site, "config", "user.name", "Test")
+    git(site, "config", "user.email", "test@example.com")
+    git(site, "remote", "add", "origin", GITHUB_URL)
+    git(site, "config", f"url.{bare}.insteadOf", GITHUB_URL)
+    files = make_site(site)
+    git(site, "add", "-A")
+    git(site, "commit", "-q", "-m", "site")
+    return site, bare, files
 
 
-def entry(data):
-    return {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+def advance_branch_with_stray(bare, name="stray.html", content=b"stray page\n"):
+    """Commit name onto the bare's gh-pages branch, as if someone else pushed."""
+    tip = git(bare, "rev-parse", "refs/heads/gh-pages")
+    blob = run_git(bare, ["hash-object", "-w", "--stdin"], input=content.decode())
+    fd, index = tempfile.mkstemp(prefix=".f3l-test-index-")
+    os.close(fd)
+    env = dict(os.environ, GIT_INDEX_FILE=index)
+    try:
+        run_git(bare, ["read-tree", "refs/heads/gh-pages"], env=env)
+        run_git(bare, ["update-index", "--add", "--cacheinfo",
+                       f"100644,{blob},{name}"], env=env)
+        tree = run_git(bare, ["write-tree"], env=env)
+        commit = run_git(bare, ["commit-tree", tree, "-p", tip, "-m", "stray push"], env=env)
+    finally:
+        os.unlink(index)
+    git(bare, "update-ref", "refs/heads/gh-pages", commit)
+    return commit
+
+
+def no_network(url):
+    raise deploy.LiveFetchError("network disabled in tests")
 
 
 class DeploySetTest(unittest.TestCase):
-    def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.root)
-
-    def test_includes_pages_stylesheet_and_assets_recursively(self):
-        make_site(self.root)
-        self.assertEqual(
-            list(deploy.collect_deploy_set(self.root)),
-            [
-                "about.html",
-                "assets/F3L contest bulletin template 2026 v1.1.doc",
-                "assets/highstart/image001.jpg",
-                "assets/wagon.jpg",
-                "index.html",
-                "styles.css",
-            ],
-        )
-
-    def test_excludes_non_site_files_and_dotfiles(self):
-        make_site(self.root)
-        for rel in [
-            "README.txt", "smartftp.json", "deploy/deploy.py", "deploy/README.md",
-            "decisions/ledger.md", "step-0/requirements/x-design.md", "step-0/page.html",
-            ".claude/settings.json", ".git/config", ".DS_Store", "assets/.DS_Store",
-            "assets/.hidden/secret.jpg", "other.css", "nested/page.html",
-        ]:
-            write(self.root, rel, "x")
-        local = deploy.collect_deploy_set(self.root)
-        self.assertEqual(len(local), 6)
-        self.assertNotIn("assets/.DS_Store", local)
-
-    def test_records_sha256_and_size(self):
-        write(self.root, "index.html", b"hello")
-        self.assertEqual(deploy.collect_deploy_set(self.root), {"index.html": entry(b"hello")})
-
     def test_is_deploy_path(self):
-        self.assertTrue(deploy.is_deploy_path("host.html"))
-        self.assertTrue(deploy.is_deploy_path("assets/PhxPilots.JPG"))
-        self.assertFalse(deploy.is_deploy_path("assets"))
-        self.assertFalse(deploy.is_deploy_path("deploy/deploy.py"))
-        self.assertFalse(deploy.is_deploy_path(".f3l-deploy-manifest.json"))
-        self.assertFalse(deploy.is_deploy_path(""))
+        for rel in ["index.html", "PAGE.HTML", "styles.css", "assets/wagon.jpg",
+                    "assets/highstart/image001.jpg",
+                    "assets/F3L contest bulletin template 2026 v1.1.doc"]:
+            self.assertTrue(deploy.is_deploy_path(rel), rel)
+        for rel in ["README.md", "deploy/deploy.py", ".hidden", "assets/.secret/x.jpg",
+                    "src/a.html", "styles.css.map", "assets", ""]:
+            self.assertFalse(deploy.is_deploy_path(rel), rel)
+
+    def test_collect_deploy_set(self):
+        with tempfile.TemporaryDirectory(prefix="f3l-deployset-") as tmp:
+            root = Path(tmp)
+            make_site(root)
+            (root / "README.md").write_text("no\n")
+            (root / "deploy").mkdir()
+            (root / "deploy" / "deploy.py").write_text("# no\n")
+            (root / ".env").write_text("no\n")
+            (root / "assets" / ".cache").mkdir()
+            (root / "assets" / ".cache" / "x").write_bytes(b"no")
+            sizes = deploy.collect_deploy_set(root)
+        self.assertEqual(sizes, {rel: len(data) for rel, data in FILES.items()})
+
+    def test_collect_deploy_set_empty(self):
+        with tempfile.TemporaryDirectory(prefix="f3l-deployset-") as tmp:
+            self.assertEqual(deploy.collect_deploy_set(tmp), {})
 
 
-class PlanTest(unittest.TestCase):
-    local = {
-        "index.html": entry(b"home"),
-        "styles.css": entry(b"css"),
-        "assets/a.jpg": entry(b"jpeg"),
-    }
-
-    def manifest(self, **overrides):
-        files = {rel: dict(info) for rel, info in self.local.items()}
-        files.update(overrides)
-        return {"version": 1, "files": files}
-
-    def listing(self, **overrides):
-        listing = {rel: info["size"] for rel, info in self.local.items()}
-        listing[deploy.MANIFEST_NAME] = 100
-        listing.update(overrides)
-        return listing
-
-    def test_no_manifest_makes_everything_new(self):
-        plan = deploy.compute_plan(self.local, None, self.listing())
-        self.assertEqual(plan.new, sorted(self.local))
-        self.assertEqual(plan.changed + plan.unchanged + plan.remote_only, [])
-
-    def test_manifest_without_files_counts_as_absent(self):
-        plan = deploy.compute_plan(self.local, {"version": 1}, self.listing())
-        self.assertEqual(plan.new, sorted(self.local))
-
-    def test_everything_matching_is_unchanged(self):
-        plan = deploy.compute_plan(self.local, self.manifest(), self.listing())
-        self.assertEqual(plan.unchanged, sorted(self.local))
-        self.assertEqual(plan.new + plan.changed + plan.remote_only, [])
-        self.assertEqual(plan.to_upload, [])
-
-    def test_path_missing_from_manifest_is_new(self):
-        manifest = self.manifest()
-        del manifest["files"]["styles.css"]
-        plan = deploy.compute_plan(self.local, manifest, self.listing())
-        self.assertEqual(plan.new, ["styles.css"])
-
-    def test_path_missing_from_listing_is_new(self):
-        listing = self.listing()
-        del listing["assets/a.jpg"]
-        plan = deploy.compute_plan(self.local, self.manifest(), listing)
-        self.assertEqual(plan.new, ["assets/a.jpg"])
-        self.assertEqual(plan.unchanged, ["index.html", "styles.css"])
-
-    def test_hash_difference_is_changed(self):
-        manifest = self.manifest(**{"index.html": {"sha256": "old", "size": 4}})
-        plan = deploy.compute_plan(self.local, manifest, self.listing())
-        self.assertEqual(plan.changed, ["index.html"])
-
-    def test_remote_size_drift_behind_manifest_is_changed(self):
-        plan = deploy.compute_plan(self.local, self.manifest(), self.listing(**{"styles.css": 999}))
-        self.assertEqual(plan.changed, ["styles.css"])
-
-    def test_force_marks_existing_files_changed(self):
-        plan = deploy.compute_plan(self.local, self.manifest(), self.listing(), force=True)
-        self.assertEqual(plan.changed, sorted(self.local))
-        self.assertEqual(plan.unchanged, [])
-
-    def test_remote_only_excludes_manifest_and_dotfiles(self):
-        listing = self.listing(**{"old.html": 5, "assets/old/b.png": 3, ".htaccess": 9,
-                                  "assets/.DS_Store": 1, "index.html.uploading": 2})
-        plan = deploy.compute_plan(self.local, self.manifest(), listing)
-        self.assertEqual(plan.remote_only, ["assets/old/b.png", "index.html.uploading", "old.html"])
-
-    def test_upload_order_sends_assets_then_stylesheet_then_pages(self):
-        plan = deploy.compute_plan(self.local, None, {})
-        self.assertEqual(plan.to_upload, ["assets/a.jpg", "styles.css", "index.html"])
-
-    def test_parent_dirs(self):
-        self.assertEqual(deploy.parent_dirs("assets/highstart/a.png"), ["assets", "assets/highstart"])
-        self.assertEqual(deploy.parent_dirs("index.html"), [])
-
-
-class CredentialsTest(unittest.TestCase):
+class EnvFileTest(unittest.TestCase):
     def setUp(self):
-        self.dir = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.dir)
-        self.warnings = []
+        tmp = tempfile.TemporaryDirectory(prefix="f3l-env-")
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name)
+        self._default = deploy.DEFAULT_ENV_FILE
+        deploy.DEFAULT_ENV_FILE = self.dir / "deploy.env"  # absent unless a test writes it
+        self.addCleanup(setattr, deploy, "DEFAULT_ENV_FILE", self._default)
 
-    def env_file(self, text, mode=0o600):
-        path = self.dir / "deploy.env"
+    def write_env(self, text, name="deploy.env"):
+        path = self.dir / name
         path.write_text(text)
-        path.chmod(mode)
         return path
 
-    def resolve(self, environ, env_file=None, read_op=None):
-        def no_op(ref):
-            raise AssertionError("op read should not run")
-        return deploy.resolve_settings(environ, env_file=env_file, warn=self.warnings.append,
-                                       read_op=read_op or no_op)
+    def test_defaults_when_nothing(self):
+        s = deploy.resolve_settings({})
+        self.assertEqual(s.remote, "origin")
+        self.assertEqual(s.branch, "gh-pages")
+        self.assertEqual(s.domain, "www.f3lcontestseries.org")
+        self.assertEqual(s.site_url, "https://www.f3lcontestseries.org")
+        self.assertEqual(s.env_file, self.dir / "deploy.env")
+
+    def test_file_values_and_url_trailing_slash(self):
+        self.write_env("F3L_PAGES_REMOTE=other\nF3L_SITE_URL=https://x.test/\n")
+        s = deploy.resolve_settings({})
+        self.assertEqual(s.remote, "other")
+        self.assertEqual(s.site_url, "https://x.test")
+
+    def test_process_env_beats_file(self):
+        self.write_env("F3L_PAGES_REMOTE=other\n")
+        s = deploy.resolve_settings({"F3L_PAGES_REMOTE": "envremote"})
+        self.assertEqual(s.remote, "envremote")
+
+    def test_f3l_deploy_env_points_at_file(self):
+        path = self.write_env("F3L_PAGES_BRANCH=pages\n", name="custom.env")
+        s = deploy.resolve_settings({deploy.ENV_FILE_KEY: str(path)})
+        self.assertEqual(s.branch, "pages")
+        self.assertEqual(s.env_file, path)
+
+    def test_explicit_env_file_required(self):
+        with self.assertRaises(deploy.UsageError):
+            deploy.resolve_settings({}, env_file=str(self.dir / "missing.env"))
 
     def test_parse_env_file(self):
         values = deploy.parse_env_file(
-            "# comment\n\nF3L_FTP_HOST=ftp.example.com\nexport F3L_FTP_USER = 'bob'\n"
-            'F3L_FTP_PASSWORD="p=a ss#word"\n'
-        )
-        self.assertEqual(values, {"F3L_FTP_HOST": "ftp.example.com", "F3L_FTP_USER": "bob",
-                                  "F3L_FTP_PASSWORD": "p=a ss#word"})
+            'A=1\nexport B=2\n# comment\n\nD="4 4"\nE=\'5\'\nF = 6\n')
+        self.assertEqual(values, {"A": "1", "B": "2", "D": "4 4", "E": "5", "F": "6"})
 
-    def test_parse_env_file_rejects_malformed_line(self):
+    def test_parse_env_file_malformed(self):
+        with self.assertRaises(deploy.UsageError) as ctx:
+            deploy.parse_env_file("A=1\nNOEQUALS\n")
+        self.assertIn("line 2", str(ctx.exception))
         with self.assertRaises(deploy.UsageError):
-            deploy.parse_env_file("F3L_FTP_HOST\n")
+            deploy.parse_env_file("=x\n")
 
-    def test_environment_beats_file_and_defaults_fill_the_rest(self):
-        path = self.env_file("F3L_FTP_PASSWORD=from-file\nF3L_FTP_USER=file-user\n")
-        s = self.resolve({"F3L_FTP_PASSWORD": "from-env"}, env_file=path)
-        self.assertEqual((s.password, s.user, s.host, s.remote_dir),
-                         ("from-env", "file-user", "ftp.mcneilco.com", "/f3l_series"))
+    def test_load_env_file_permission_warning(self):
+        path = self.write_env("A=1\n")
+        os.chmod(path, 0o644)
+        warnings = []
+        deploy.load_env_file(path, required=False, warn=warnings.append)
+        self.assertIn("chmod 600", warnings[0])
 
-    def test_file_used_when_environment_empty(self):
-        path = self.env_file("F3L_FTP_PASSWORD=from-file\nF3L_FTP_REMOTE_DIR=/elsewhere\n")
-        s = self.resolve({"F3L_FTP_PASSWORD": ""}, env_file=path)
-        self.assertEqual((s.password, s.remote_dir), ("from-file", "/elsewhere"))
+    def test_load_env_file_missing_not_required(self):
+        self.assertEqual(deploy.load_env_file(self.dir / "nope", required=False,
+                                              warn=lambda m: None), {})
 
-    def test_env_file_located_by_variable(self):
-        path = self.env_file("F3L_FTP_PASSWORD=via-var\n")
-        s = self.resolve({deploy.ENV_FILE_KEY: str(path)})
-        self.assertEqual((s.password, s.env_file), ("via-var", path))
 
-    def test_default_env_file_is_optional_but_explicit_one_is_not(self):
-        with unittest.mock.patch.object(deploy, "DEFAULT_ENV_FILE", self.dir / "absent.env"):
-            s = self.resolve({"F3L_FTP_PASSWORD": "x"})
-        self.assertEqual(s.password, "x")
-        with self.assertRaisesRegex(deploy.UsageError, "does not exist"):
-            self.resolve({"F3L_FTP_PASSWORD": "x"}, env_file=self.dir / "absent.env")
-
-    def test_op_reference_used_only_without_password(self):
-        path = self.env_file("F3L_FTP_PASSWORD_OP_REF=op://Private/F3L FTP/password\n")
-        refs = []
-        s = self.resolve({}, env_file=path, read_op=lambda ref: refs.append(ref) or "from-op")
-        self.assertEqual((s.password, refs), ("from-op", ["op://Private/F3L FTP/password"]))
-        s = self.resolve({"F3L_FTP_PASSWORD": "from-env"}, env_file=path)
-        self.assertEqual(s.password, "from-env")
-
-    def test_missing_password_names_variable_and_file(self):
-        path = self.env_file("F3L_FTP_USER=bob\n")
-        with self.assertRaises(deploy.UsageError) as caught:
-            self.resolve({}, env_file=path)
-        self.assertIn("F3L_FTP_PASSWORD", str(caught.exception))
-        self.assertIn(str(path), str(caught.exception))
-
-    def test_warns_when_env_file_readable_by_others(self):
-        self.resolve({}, env_file=self.env_file("F3L_FTP_PASSWORD=x\n", mode=0o644))
-        self.assertEqual(len(self.warnings), 1)
-        self.assertIn("chmod 600", self.warnings[0])
-        self.warnings.clear()
-        self.resolve({}, env_file=self.env_file("F3L_FTP_PASSWORD=x\n", mode=0o600))
-        self.assertEqual(self.warnings, [])
-
-    def test_password_not_in_repr(self):
-        s = self.resolve({"F3L_FTP_PASSWORD": "hunter2"}, env_file=self.env_file(""))
-        self.assertNotIn("hunter2", repr(s))
+class PorcelainZTest(unittest.TestCase):
+    def test_parse_porcelain_z(self):
+        self.assertEqual(
+            deploy.parse_porcelain_z(" M index.html\0R  assets/new name.jpg\0assets/old.jpg\0?? deploy/x.py\0"),
+            ["index.html", "assets/new name.jpg", "assets/old.jpg", "deploy/x.py"])
+        self.assertEqual(deploy.parse_porcelain_z(""), [])
 
 
 class GitStateTest(unittest.TestCase):
-    def test_parse_porcelain_z_handles_renames_and_spaces(self):
-        out = " M index.html\0R  assets/new name.jpg\0assets/old.jpg\0?? deploy/x.py\0"
-        self.assertEqual(deploy.parse_porcelain_z(out),
-                         ["index.html", "assets/new name.jpg", "assets/old.jpg", "deploy/x.py"])
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="f3l-gitstate-")
+        self.addCleanup(tmp.cleanup)
+        self.dir = Path(tmp.name) / "site"
+        self.dir.mkdir()
+        git(self.dir, "init", "-q")
+        git(self.dir, "config", "user.name", "Test")
+        git(self.dir, "config", "user.email", "test@example.com")
+        (self.dir / "index.html").write_bytes(b"<h1>home</h1>")
+        (self.dir / "README.md").write_text("readme\n")
+        git(self.dir, "add", "-A")
+        git(self.dir, "commit", "-q", "-m", "init")
 
-    @unittest.skipUnless(shutil.which("git"), "git not installed")
-    def test_dirty_reports_only_deploy_set_paths(self):
-        root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, root)
-        make_site(root)
-        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t"]
-        subprocess.run(git + ["init", "-q"], check=True)
-        subprocess.run(git + ["add", "."], check=True)
-        subprocess.run(git + ["commit", "-qm", "site"], check=True)
-
-        commit, dirty = deploy.git_state(root)
-        self.assertRegex(commit, r"^[0-9a-f]{40}$")
+    def test_clean(self):
+        commit, branch, dirty = deploy.git_state(self.dir)
+        self.assertEqual(commit, git(self.dir, "rev-parse", "HEAD"))
+        self.assertEqual(branch, git(self.dir, "rev-parse", "--abbrev-ref", "HEAD"))
         self.assertEqual(dirty, [])
 
-        write(root, "README.txt", "not the site")
-        write(root, "deploy/notes.md", "not the site")
-        self.assertEqual(deploy.git_state(root)[1], [])
+    def test_dirty_site_file(self):
+        (self.dir / "index.html").write_bytes(b"<h1>home v2</h1>")
+        _commit, _branch, dirty = deploy.git_state(self.dir)
+        self.assertEqual(dirty, ["index.html"])
 
-        write(root, "index.html", "edited")
-        write(root, "assets/highstart/new image.png", b"png")
-        self.assertEqual(deploy.git_state(root)[1],
-                         ["assets/highstart/new image.png", "index.html"])
+    def test_dirty_only_counts_deploy_paths(self):
+        (self.dir / "README.md").write_text("readme v2\n")
+        _commit, _branch, dirty = deploy.git_state(self.dir)
+        self.assertEqual(dirty, [])
 
-    def test_not_a_checkout_is_unknown(self):
-        root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, root)
-        failed = subprocess.CompletedProcess([], 128, "", "not a git repository")
-        self.assertEqual(deploy.git_state(root, run=lambda *a, **k: failed), (None, None))
+    def test_untracked_site_file(self):
+        (self.dir / "new.html").write_bytes(b"<p>new</p>")
+        _commit, _branch, dirty = deploy.git_state(self.dir)
+        self.assertEqual(dirty, ["new.html"])
+
+    def test_not_a_checkout(self):
+        with tempfile.TemporaryDirectory(prefix="f3l-gitstate-") as tmp:
+            self.assertEqual(deploy.git_state(tmp), (None, None, None))
+
+
+class PureTest(unittest.TestCase):
+    def test_compute_plan_all_new(self):
+        local = {"b.html": ("a" * 40, 1), "a.html": ("b" * 40, 2), "styles.css": ("a" * 40, 3)}
+        plan = deploy.compute_plan(local, {})
+        self.assertEqual(plan.new, ["a.html", "b.html", "styles.css"])
+        self.assertEqual(plan.changed, [])
+        self.assertEqual(plan.unchanged, [])
+        self.assertEqual(plan.remote_only, [])
+        self.assertEqual(plan.to_upload, ["styles.css", "a.html", "b.html"])
+
+    def test_compute_plan_matching(self):
+        local = {"a.html": ("a" * 40, 1), "styles.css": ("b" * 40, 2)}
+        plan = deploy.compute_plan(local, dict(local))
+        self.assertEqual(plan.unchanged, ["a.html", "styles.css"])
+        self.assertEqual(plan.to_upload, [])
+
+    def test_compute_plan_blob_diff(self):
+        local = {"a.html": ("a" * 40, 1), "b.html": ("b" * 40, 2), "styles.css": ("c" * 40, 3)}
+        remote = {"a.html": ("a" * 40, 1), "b.html": ("d" * 40, 2), "styles.css": ("c" * 40, 3)}
+        plan = deploy.compute_plan(local, remote)
+        self.assertEqual(plan.changed, ["b.html"])
+        self.assertEqual(plan.unchanged, ["a.html", "styles.css"])
+
+    def test_compute_plan_force(self):
+        local = {"a.html": ("a" * 40, 1), "b.html": ("b" * 40, 2)}
+        plan = deploy.compute_plan(local, dict(local), force=True)
+        self.assertEqual(plan.changed, ["a.html", "b.html"])
+        self.assertEqual(plan.new, [])
+        # --force never turns an absent remote file into a change
+        plan = deploy.compute_plan(local, {}, force=True)
+        self.assertEqual(plan.new, ["a.html", "b.html"])
+
+    def test_compute_plan_remote_only_excludes_managed_extras(self):
+        local = {"a.html": ("a" * 40, 1)}
+        remote = {"a.html": ("a" * 40, 1), ".nojekyll": ("e" * 40, 0),
+                  "CNAME": ("e" * 40, 5), "old.html": ("f" * 40, 2)}
+        plan = deploy.compute_plan(local, remote)
+        self.assertEqual(plan.remote_only, ["old.html"])
+        self.assertEqual(plan.unchanged, ["a.html"])
+
+    def test_parse_ls_tree(self):
+        text = (
+            "100644 blob e69de29bb2d1d6434b8b29ae775ad8c2e48c5391        0\t.nojekyll\n"
+            "100644 blob 8b137891791fe96927ad78e64b0aad7bded08bdc      12\tindex.html\n"
+            "160000 commit 1234567890123456789012345678901234567890\tsub\n"
+        )
+        self.assertEqual(deploy.parse_ls_tree(text), {
+            ".nojekyll": ("e69de29bb2d1d6434b8b29ae775ad8c2e48c5391", 0),
+            "index.html": ("8b137891791fe96927ad78e64b0aad7bded08bdc", 12),
+        })
+        self.assertEqual(deploy.parse_ls_tree(""), {})
+
+    def test_publish_message(self):
+        now = datetime(2026, 10, 16, 18, 4, 11, tzinfo=timezone.utc)
+        msg = deploy.publish_message("abc1234567890", "main", False,
+                                     {"a.html": ("b" * 40, 3)}, "john@host", now=now)
+        self.assertEqual(msg,
+                         "Publish abc1234 from main\n"
+                         "\n"
+                         "Source-Commit: abc1234567890\n"
+                         "Source-Dirty: false\n"
+                         "Deployed-By: john@host\n"
+                         "Deployed-At: 2026-10-16T18:04:11Z\n"
+                         "Files: 1 (3 bytes)\n")
+        self.assertIn("Source-Dirty: true\n",
+                      deploy.publish_message("abc1234567890", "main", True,
+                                             {"a.html": ("b" * 40, 3)}, "j@h", now=now))
+        self.assertIn("Source-Dirty: unknown\n",
+                      deploy.publish_message("abc1234567890", "main", None,
+                                             {"a.html": ("b" * 40, 3)}, "j@h", now=now))
+        msg = deploy.publish_message(None, None, None, {}, "j@h", now=now)
+        self.assertTrue(msg.startswith("Publish unknown from unknown branch\n"))
+        self.assertIn("Source-Commit: unknown\n", msg)
+        msg = deploy.publish_message("abc1234567890", "main", False,
+                                     {"a": ("b" * 40, 17509460), "c": ("b" * 40, 17509460)},
+                                     "j@h", now=now)
+        self.assertIn("Files: 2 (35,018,920 bytes)\n", msg)
+
+    def test_parse_trailers(self):
+        now = datetime(2026, 10, 16, 18, 4, 11, tzinfo=timezone.utc)
+        msg = deploy.publish_message("abc1234567890", "main", False,
+                                     {"a.html": ("b" * 40, 3)}, "john@host", now=now)
+        self.assertEqual(deploy.parse_trailers(msg), {
+            "Source-Commit": "abc1234567890",
+            "Source-Dirty": "false",
+            "Deployed-By": "john@host",
+            "Deployed-At": "2026-10-16T18:04:11Z",
+            "Files": "1 (3 bytes)",
+        })
+        self.assertEqual(deploy.parse_trailers("Merge branch 'x'\n\nBody line\n"), {})
+        self.assertEqual(deploy.parse_trailers("Just a subject\n"), {})
+        self.assertEqual(
+            deploy.parse_trailers("Publish abc from main\n\nSome note: with colon\n\nSource-Commit: 123\n"),
+            {"Source-Commit": "123"})
+
+    def test_github_repo_from_url(self):
+        want = "jmcneil86043/f3l-series-website"
+        for url in [
+            "git@github.com:jmcneil86043/f3l-series-website.git",
+            "https://github.com/jmcneil86043/f3l-series-website.git",
+            "https://github.com/jmcneil86043/f3l-series-website",
+            "ssh://git@github.com/jmcneil86043/f3l-series-website.git",
+        ]:
+            self.assertEqual(deploy.github_repo_from_url(url), want, url)
+        for url in ["git@github.com:jmcneil86043",
+                    "https://example.com/jmcneil86043/f3l-series-website.git",
+                    "git@github.com:notarepo"]:
+            self.assertIsNone(deploy.github_repo_from_url(url), url)
+
+    def test_blob_id(self):
+        self.assertEqual(deploy.blob_id(b""), "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391")
+        res = subprocess.run(["git", "hash-object", "-w", "--stdin"],
+                             input="hello", capture_output=True, text=True, check=True)
+        self.assertEqual(deploy.blob_id(b"hello"), res.stdout.strip())
+
+    def test_format_size(self):
+        self.assertEqual(deploy.format_size(512), "512 B")
+        self.assertEqual(deploy.format_size(2048), "2.0 KB")
+        self.assertEqual(deploy.format_size(3 * 1024 * 1024), "3.0 MB")
+
+
+class LiveCheckTest(unittest.TestCase):
+    def local_map(self):
+        return {
+            "a.html": (deploy.blob_id(b"<a>"), 3),
+            "assets/x.jpg": (deploy.blob_id(b"JPG"), 3),
+        }
+
+    def test_match_and_urls(self):
+        local = self.local_map()
+        bodies = {"https://example.com/a.html": b"<a>",
+                  "https://example.com/assets/x.jpg": b"JPG"}
+        urls = []
+
+        def fetch(url):
+            urls.append(url)
+            return bodies[url]
+
+        status, detail = deploy.check_live(local, "https://example.com", fetch=fetch)
+        self.assertEqual((status, detail), ("match", []))
+        self.assertEqual(urls, ["https://example.com/a.html", "https://example.com/assets/x.jpg"])
+
+    def test_differs(self):
+        def fetch(url):
+            return b"<b>" if url.endswith("a.html") else b"JPG"
+        status, detail = deploy.check_live(self.local_map(), "https://example.com", fetch=fetch)
+        self.assertEqual((status, detail), ("differs", ["a.html"]))
+
+    def test_not_checked(self):
+        def fetch(url):
+            raise deploy.LiveFetchError("TLS error (x)")
+        status, detail = deploy.check_live(self.local_map(), "https://example.com", fetch=fetch)
+        self.assertEqual((status, detail), ("not-checked", "TLS error (x)"))
+
+    def test_never_raises(self):
+        def fetch(url):
+            raise RuntimeError("boom")
+        status, detail = deploy.check_live(self.local_map(), "https://example.com", fetch=fetch)
+        self.assertEqual((status, detail), ("not-checked", "boom"))
+
+    def test_quotes_urls_and_strips_trailing_slash(self):
+        local = {"my page.html": (deploy.blob_id(b"x"), 1)}
+        urls = []
+
+        def fetch(url):
+            urls.append(url)
+            return b"x"
+
+        deploy.check_live(local, "https://e.com/", fetch=fetch)
+        self.assertEqual(urls, ["https://e.com/my%20page.html"])
 
 
 class CliTest(unittest.TestCase):
-    """main() end to end with a temp site and FakeRemote."""
-
     def setUp(self):
-        self.root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, self.root)
-        make_site(self.root)
-        self.environ = {"F3L_FTP_PASSWORD": "secret-pw", deploy.ENV_FILE_KEY: ""}
-        self.git = lambda root: ("abc123", [])
-        patcher = unittest.mock.patch.object(deploy, "DEFAULT_ENV_FILE", self.root / "absent.env")
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        tmp = tempfile.TemporaryDirectory(prefix="f3l-cli-")
+        self.addCleanup(tmp.cleanup)
+        self.tmp = Path(tmp.name)
+        self.site, self.bare, self.files = make_temp_site(self.tmp)
+        self._default = deploy.DEFAULT_ENV_FILE
+        deploy.DEFAULT_ENV_FILE = self.tmp / "never-created.env"
+        self.addCleanup(setattr, deploy, "DEFAULT_ENV_FILE", self._default)
 
-    def run_main(self, argv, remote):
+    def run_main(self, argv, fetch=None, git=None, environ=None):
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-            code = deploy.main(argv, environ=self.environ, root=self.root,
-                               remote_factory=lambda settings: remote, git=self.git)
-        self.assertNotIn("secret-pw", out.getvalue() + err.getvalue())
+            code = deploy.main(argv, environ=environ or {}, root=self.site,
+                               git=git or deploy.git_state, fetch=fetch or no_network)
         return code, out.getvalue(), err.getvalue()
 
-    def deployed(self, remote):
-        """A remote that already holds exactly the local site plus its manifest."""
-        local = deploy.collect_deploy_set(self.root)
-        for rel in local:
-            remote.files[rel] = (self.root / rel).read_bytes()
-        remote.files[deploy.MANIFEST_NAME] = json.dumps(
-            deploy.build_manifest(local, "abc123", False, "t@host")).encode()
-        return remote
+    def branch_names(self):
+        return git(self.bare, "ls-tree", "-r", "--name-only",
+                   "refs/heads/gh-pages").splitlines()
 
-    def test_dry_run_is_default_and_sends_nothing(self):
-        remote = FakeRemote(files={"old.html": b"old"})
-        code, out, _ = self.run_main([], remote)
-        self.assertEqual(code, 0)
-        self.assertEqual(remote.log, [])
-        self.assertEqual(remote.files, {"old.html": b"old"})
-        self.assertTrue(remote.closed)
-        self.assertIn("DRY RUN", out)
-        self.assertIn("New (6, would be uploaded)", out)
-        self.assertIn("Remote-only (1, left alone; --delete removes them)", out)
-        self.assertIn("Totals: 6 new, 0 changed, 0 unchanged, 1 remote-only", out)
+    def tip_trailers(self):
+        return deploy.parse_trailers(
+            git(self.bare, "log", "-1", "--format=%B", "refs/heads/gh-pages"))
 
-    def test_dry_run_ignores_dirty_tree(self):
-        self.git = lambda root: ("abc123", ["index.html"])
-        code, out, _ = self.run_main([], FakeRemote())
+    def test_first_dry_run(self):
+        code, out, err = self.run_main([])
+        self.assertEqual(code, 0, err)
+        self.assertIn("DRY RUN (nothing will be sent; pass --upload to publish)", out)
+        head = git(self.site, "rev-parse", "HEAD")
+        self.assertIn(f"Local:  {self.site} @ {head[:7]}", out)
+        self.assertIn("Remote: origin/gh-pages @ absent", out)
+        self.assertIn("No gh-pages branch on origin yet: every file counts as new.", out)
+        self.assertIn("New (6, would be uploaded):", out)
+        self.assertIn("assets/highstart/image001.jpg", out)
+        self.assertIn("assets/F3L contest bulletin template 2026 v1.1.doc", out)
+        self.assertIn(f"Totals: 6 new, 0 changed, 0 unchanged, 0 remote-only; "
+                      f"{deploy.format_size(TOTAL_BYTES)} to send", out)
+        self.assertIn("Live: not checked: network disabled in tests", out)
+
+    def test_dry_run_ignores_dirty(self):
+        (self.site / "index.html").write_text("<h1>home edited</h1>")
+        code, out, _err = self.run_main([])
         self.assertEqual(code, 0)
         self.assertIn("(dirty)", out)
+        self.assertIn("DRY RUN", out)
 
-    def test_first_upload_sends_everything_and_writes_manifest_last(self):
-        remote = FakeRemote()
-        code, out, _ = self.run_main(["--upload"], remote)
-        self.assertEqual(code, 0, out)
-        local = deploy.collect_deploy_set(self.root)
-        self.assertEqual(remote.log[-1], ("manifest",))
-        uploads = [e[1] for e in remote.log if e[0] == "upload"]
-        self.assertEqual(uploads[-3:], ["styles.css", "about.html", "index.html"])
-        self.assertIn("assets/highstart", remote.dirs)
-        manifest = remote.read_manifest()
-        self.assertEqual(manifest["files"], local)
-        self.assertEqual((manifest["version"], manifest["git_commit"], manifest["git_dirty"]),
-                         (1, "abc123", False))
-        self.assertRegex(manifest["deployed_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
-        self.assertIn("@", manifest["deployed_by"])
+    def test_first_upload(self):
+        code, out, err = self.run_main(["--upload"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("UPLOAD", out)
+        self.assertIn("Publish:", out)
+        self.assertIn("pushed    origin/gh-pages", out)
+        self.assertIn("Deployments: https://github.com/jmcneil86043/f3l-series-website/deployments",
+                      out)
+        self.assertIn("Re-run the dry run in a minute to confirm the live site matches.", out)
+        names = self.branch_names()
+        self.assertEqual(sorted(names), sorted(list(FILES) + [".nojekyll", "CNAME"]))
+        self.assertEqual(git(self.bare, "show", "refs/heads/gh-pages:CNAME"),
+                         "www.f3lcontestseries.org")
+        self.assertEqual(git(self.bare, "show", "refs/heads/gh-pages:.nojekyll"), "")
+        msg = git(self.bare, "log", "-1", "--format=%B", "refs/heads/gh-pages")
+        trailers = self.tip_trailers()
+        self.assertEqual(trailers["Source-Commit"], git(self.site, "rev-parse", "HEAD"))
+        self.assertEqual(trailers["Source-Dirty"], "false")
+        self.assertIn("@", trailers["Deployed-By"])
+        self.assertRegex(trailers["Deployed-At"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+        self.assertIn(f"Files: 6 ({TOTAL_BYTES:,} bytes)", msg)
 
-    def test_second_run_after_upload_has_nothing_to_do(self):
-        remote = FakeRemote()
-        self.run_main(["--upload"], remote)
-        remote.log.clear()
-        code, out, _ = self.run_main(["--upload"], remote)
-        self.assertEqual(code, 0)
-        self.assertEqual(remote.log, [])
+    def test_second_upload_nothing_to_do(self):
+        self.run_main(["--upload"])
+        code, out, err = self.run_main(["--upload"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("Totals: 0 new, 0 changed, 6 unchanged, 0 remote-only", out)
         self.assertIn("Nothing to do.", out)
-        self.assertIn("Totals: 0 new, 0 changed, 6 unchanged", out)
 
-    def test_one_page_edit_uploads_only_that_page(self):
-        remote = self.deployed(FakeRemote())
-        write(self.root, "about.html", "<h1>about, edited</h1>")
-        code, out, _ = self.run_main(["--upload"], remote)
+    def test_changed_file(self):
+        self.run_main(["--upload"])
+        (self.site / "about.html").write_text("<h1>about v2</h1>")
+        code, out, _err = self.run_main([])
         self.assertEqual(code, 0)
-        self.assertEqual(remote.log, [("upload", "about.html"), ("manifest",)])
-        self.assertEqual(remote.files["about.html"], b"<h1>about, edited</h1>")
-        self.assertIn("Changed (1, uploaded)", out)
+        self.assertIn("Changed (1, would be uploaded):", out)
+        self.assertIn("  about.html", out)
+        self.assertIn("Totals: 0 new, 1 changed, 5 unchanged, 0 remote-only", out)
 
-    def test_force_resends_everything(self):
-        remote = self.deployed(FakeRemote())
-        code, _, _ = self.run_main(["--upload", "--force"], remote)
+    def test_force_publishes_new_commit_with_identical_tree(self):
+        self.run_main(["--upload"])
+        old = git(self.bare, "rev-parse", "refs/heads/gh-pages")
+        code, out, err = self.run_main(["--upload", "--force"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("Publish:", out)
+        new = git(self.bare, "rev-parse", "refs/heads/gh-pages")
+        self.assertNotEqual(old, new)
+        self.assertEqual(git(self.bare, "rev-parse", f"{old}^{{tree}}"),
+                         git(self.bare, "rev-parse", f"{new}^{{tree}}"))
+
+    def test_remote_only_and_delete(self):
+        self.run_main(["--upload"])
+        advance_branch_with_stray(self.bare, "stray.html")
+        code, out, _err = self.run_main([])
         self.assertEqual(code, 0)
-        self.assertEqual(len([e for e in remote.log if e[0] == "upload"]), 6)
+        self.assertIn("Remote-only (1, left alone; --delete removes them):", out)
+        self.assertIn("  stray.html", out)
+        self.assertIn("Totals: 0 new, 0 changed, 6 unchanged, 1 remote-only", out)
+        code, out, err = self.run_main(["--upload"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("Nothing to do.", out)
+        self.assertIn("stray.html", self.branch_names())
+        code, out, err = self.run_main(["--upload", "--delete"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("Publish:", out)
+        names = self.branch_names()
+        self.assertNotIn("stray.html", names)
+        self.assertEqual(len(names), 8)
 
-    def test_delete_removes_remote_only_files_only_when_asked(self):
-        remote = self.deployed(FakeRemote(files={"old.html": b"old", ".htaccess": b"x"}))
-        self.run_main(["--upload"], remote)
-        self.assertIn("old.html", remote.files)
-        code, _, _ = self.run_main(["--upload", "--delete"], remote)
-        self.assertEqual(code, 0)
-        self.assertNotIn("old.html", remote.files)
-        self.assertIn(".htaccess", remote.files)
-        self.assertIn(deploy.MANIFEST_NAME, remote.files)
-
-    def test_failed_upload_leaves_old_manifest_and_exits_1(self):
-        remote = self.deployed(FakeRemote())
-        before = remote.files[deploy.MANIFEST_NAME]
-        write(self.root, "index.html", "edited")
-        write(self.root, "styles.css", "body{color:red}")
-        remote.fail_on = "index.html"
-        code, _, err = self.run_main(["--upload"], remote)
-        self.assertEqual(code, 1)
-        self.assertEqual(remote.files[deploy.MANIFEST_NAME], before)
-        self.assertIn("manifest was not updated", err)
-        self.assertTrue(remote.closed)
-
-    def test_dirty_tree_refuses_upload_without_allow_dirty(self):
-        self.git = lambda root: ("abc123", ["index.html"])
-        remote = FakeRemote()
-        code, _, err = self.run_main(["--upload"], remote)
+    def test_dirty_tree_refuses_upload(self):
+        (self.site / "index.html").write_text("<h1>home edited</h1>")
+        code, _out, err = self.run_main(["--upload"])
         self.assertEqual(code, 2)
+        self.assertIn("refusing to upload", err)
         self.assertIn("index.html", err)
-        self.assertEqual(remote.log, [])
+        self.assertIn("--allow-dirty", err)
 
-        code, _, _ = self.run_main(["--upload", "--allow-dirty"], remote)
-        self.assertEqual(code, 0)
-        self.assertTrue(remote.read_manifest()["git_dirty"])
+    def test_allow_dirty_publishes_with_trailer(self):
+        (self.site / "index.html").write_text("<h1>home edited</h1>")
+        code, _out, err = self.run_main(["--upload", "--allow-dirty"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.tip_trailers()["Source-Dirty"], "true")
 
     def test_unknown_git_state_refuses_upload(self):
-        self.git = lambda root: (None, None)
-        code, _, err = self.run_main(["--upload"], FakeRemote())
+        unknown = lambda root: (None, None, None)
+        code, _out, err = self.run_main(["--upload"], git=unknown)
         self.assertEqual(code, 2)
-        self.assertIn("git cannot report", err)
+        self.assertIn("git cannot report the state", err)
+        code, out, _err = self.run_main([], git=unknown)
+        self.assertEqual(code, 0)
+        self.assertIn("unknown commit", out)
+        self.assertIn("(git state unknown)", out)
 
-    def test_missing_password_exits_2_before_connecting(self):
-        self.environ = {deploy.ENV_FILE_KEY: ""}
-        remote = FakeRemote()
-        code, _, err = self.run_main([], remote)
-        self.assertEqual(code, 2)
-        self.assertIn("F3L_FTP_PASSWORD", err)
-        self.assertFalse(remote.closed)
+    def test_unreachable_remote(self):
+        # Stored URL stays GitHub-form (so the remote check passes) while a
+        # rewrite points the transport at a path that does not exist.
+        dead = "git@github.com:f3l-test/unreachable.git"
+        git(self.site, "remote", "set-url", "origin", dead)
+        git(self.site, "config", "url./nonexistent/f3l.git.insteadOf", dead)
+        code, _out, err = self.run_main([])
+        self.assertEqual(code, 1)
+        self.assertIn("cannot reach origin", err)
 
-    def test_settings_reach_the_remote_factory(self):
-        self.environ.update(F3L_FTP_HOST="ftp.example.com", F3L_FTP_REMOTE_DIR="/site")
-        seen = []
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            deploy.main([], environ=self.environ, root=self.root, git=self.git,
-                        remote_factory=lambda s: seen.append(s) or FakeRemote())
-        self.assertEqual((seen[0].host, seen[0].user, seen[0].remote_dir, seen[0].password),
-                         ("ftp.example.com", "jmcneil", "/site", "secret-pw"))
-        self.assertIn("ftp://jmcneil@ftp.example.com/site", out.getvalue())
+    def test_live_check_never_changes_exit_code(self):
+        def boom(url):
+            raise deploy.LiveFetchError("TLS error (certificate verify failed)")
+        code, out, err = self.run_main(["--upload"], fetch=boom)
+        self.assertEqual(code, 0, err)
+        self.assertIn("Publish:", out)
+        self.assertIn("Live: not checked: TLS error (certificate verify failed)", out)
 
-
-class FakeFtp:
-    """Just enough of ftplib.FTP for FtpRemote, over an in-memory tree."""
-
-    def __init__(self, files=None, dirs=(), refuse_overwrite_rename=False):
-        self.files = dict(files or {})
-        self.dirs = {"/", "/f3l_series", *dirs}
-        self.refuse_overwrite_rename = refuse_overwrite_rename
-        self.commands = []
-        self.cwd_path = "/"
-
-    def _parent(self, path):
-        return path.rsplit("/", 1)[0] or "/"
-
-    def retrbinary(self, cmd, callback):
-        path = cmd.split(" ", 1)[1]
-        if path not in self.files:
-            raise error_perm("550 No such file")
-        callback(self.files[path])
-
-    def storbinary(self, cmd, fh):
-        path = cmd.split(" ", 1)[1]
-        if self._parent(path) not in self.dirs:
-            raise error_perm("550 No such directory")
-        self.commands.append(("STOR", path))
-        self.files[path] = fh.read()
-
-    def rename(self, src, dst):
-        if self.refuse_overwrite_rename and dst in self.files:
-            raise error_perm("550 exists")
-        self.commands.append(("RNFR/RNTO", src, dst))
-        self.files[dst] = self.files.pop(src)
-
-    def delete(self, path):
-        self.commands.append(("DELE", path))
-        del self.files[path]
-
-    def mkd(self, path):
-        if path in self.dirs:
-            raise error_perm("550 exists")
-        self.commands.append(("MKD", path))
-        self.dirs.add(path)
-
-    def cwd(self, path):
-        if path not in self.dirs:
-            raise error_perm("550 No such directory")
-        self.cwd_path = path
-
-    def mlsd(self, path, facts=()):
-        yield ".", {"type": "cdir"}
-        yield "..", {"type": "pdir"}
-        for d in sorted(self.dirs):
-            if d != path and self._parent(d) == path:
-                yield d.rsplit("/", 1)[1], {"type": "dir"}
-        for f, data in sorted(self.files.items()):
-            if self._parent(f) == path:
-                yield f.rsplit("/", 1)[1], {"type": "file", "size": str(len(data))}
-
-    def quit(self):
-        self.commands.append(("QUIT",))
+    def test_settings_reach_the_remote(self):
+        upstream_url = "git@github.com:jmcneil86043/upstream-f3l.git"
+        git(self.site, "remote", "add", "upstream", upstream_url)
+        git(self.site, "config", f"url.{self.bare}.insteadOf", upstream_url)
+        code, out, _err = self.run_main([], environ={"F3L_PAGES_REMOTE": "upstream"})
+        self.assertEqual(code, 0)
+        self.assertIn("Remote: upstream/gh-pages @ absent", out)
+        env_file = self.tmp / "upstream.env"
+        env_file.write_text("F3L_PAGES_REMOTE=upstream\n")
+        code, out, _err = self.run_main(["--env", str(env_file)])
+        self.assertEqual(code, 0)
+        self.assertIn("Remote: upstream/gh-pages @ absent", out)
 
 
-class FtpRemoteTest(unittest.TestCase):
-    def remote(self, ftp):
-        remote = deploy.FtpRemote.__new__(deploy.FtpRemote)
-        remote.ftp, remote.base, remote._dirs = ftp, "/f3l_series", {""}
-        return remote
+class PlumbingTest(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory(prefix="f3l-plumbing-")
+        self.addCleanup(tmp.cleanup)
+        self.site, self.bare, self.files = make_temp_site(Path(tmp.name))
 
-    def test_listing_walks_directories_with_sizes(self):
-        ftp = FakeFtp(
-            files={"/f3l_series/index.html": b"12345", "/f3l_series/assets/hs/a b.png": b"xy",
-                   "/f3l_series/.f3l-deploy-manifest.json": b"{}", "/other/x.html": b"no"},
-            dirs={"/f3l_series/assets", "/f3l_series/assets/hs", "/f3l_series/empty", "/other"},
-        )
-        self.assertEqual(self.remote(ftp).listing(), {
-            ".f3l-deploy-manifest.json": 2, "assets/hs/a b.png": 2, "index.html": 5,
-        })
+    def local_map(self):
+        sizes = deploy.collect_deploy_set(self.site)
+        blobs = deploy.local_blobs(self.site, sorted(sizes))
+        return {rel: (blobs[rel], sizes[rel]) for rel in sizes}
 
-    def test_upload_is_atomic_rename_over_target(self):
-        root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, root)
-        path = write(root, "index.html", "new")
-        ftp = FakeFtp(files={"/f3l_series/index.html": b"old"})
-        self.remote(ftp).upload("index.html", path)
-        self.assertEqual(ftp.commands, [
-            ("STOR", "/f3l_series/index.html.uploading"),
-            ("RNFR/RNTO", "/f3l_series/index.html.uploading", "/f3l_series/index.html"),
-        ])
-        self.assertEqual(ftp.files, {"/f3l_series/index.html": b"new"})
+    def tree_names(self, tree):
+        return {line.split("\t", 1)[1]
+                for line in git(self.site, "ls-tree", "-r", tree).splitlines()}
 
-    def test_upload_falls_back_to_delete_when_rename_cannot_overwrite(self):
-        root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, root)
-        path = write(root, "index.html", "new")
-        ftp = FakeFtp(files={"/f3l_series/index.html": b"old"}, refuse_overwrite_rename=True)
-        self.remote(ftp).upload("index.html", path)
-        self.assertEqual(ftp.files, {"/f3l_series/index.html": b"new"})
-        self.assertIn(("DELE", "/f3l_series/index.html"), ftp.commands)
+    def test_build_publish_tree_first_publish(self):
+        local = self.local_map()
+        tree = deploy.build_publish_tree(self.site, None, local, "www.example.test")
+        entries = git(self.site, "ls-tree", "-r", tree).splitlines()
+        self.assertEqual(len(entries), 8)
+        byname = {line.split("\t", 1)[1]: line.split("\t", 1)[0].split()[2]
+                  for line in entries}
+        self.assertEqual(set(byname), set(FILES) | {".nojekyll", "CNAME"})
+        self.assertEqual(git(self.site, "cat-file", "blob", byname["CNAME"]), "www.example.test")
+        self.assertEqual(git(self.site, "cat-file", "blob", byname[".nojekyll"]), "")
 
-    def test_manifest_round_trip_and_absent(self):
-        ftp = FakeFtp()
-        remote = self.remote(ftp)
-        self.assertIsNone(remote.read_manifest())
-        remote.write_manifest({"version": 1, "files": {}})
-        self.assertEqual(remote.read_manifest(), {"version": 1, "files": {}})
-        self.assertEqual(set(ftp.files), {"/f3l_series/.f3l-deploy-manifest.json"})
+    def test_build_publish_tree_keeps_and_deletes_remote_only(self):
+        local = self.local_map()
+        tree1 = deploy.build_publish_tree(self.site, None, local, "d.test")
+        deploy.publish(self.site, "origin", "gh-pages", None, tree1, local,
+                       git(self.site, "rev-parse", "HEAD"), "main", [], "t@h")
+        advance_branch_with_stray(self.bare, "stray.html")
+        git(self.site, "fetch", "origin", "gh-pages")  # as main() does: fetch before building
+        tip2 = git(self.bare, "rev-parse", "refs/heads/gh-pages")
+        keep = deploy.build_publish_tree(self.site, tip2, local, "d.test",
+                                         remote_only=["stray.html"], delete=False)
+        names = self.tree_names(keep)
+        self.assertIn("stray.html", names)
+        self.assertEqual(len(names), 9)
+        dele = deploy.build_publish_tree(self.site, tip2, local, "d.test",
+                                         remote_only=["stray.html"], delete=True)
+        names = self.tree_names(dele)
+        self.assertNotIn("stray.html", names)
+        self.assertEqual(len(names), 8)
+        self.assertIn(".nojekyll", names)
 
-    def test_unreadable_manifest_counts_as_absent(self):
-        ftp = FakeFtp(files={"/f3l_series/.f3l-deploy-manifest.json": b"not json"})
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            self.assertIsNone(self.remote(ftp).read_manifest())
-        self.assertIn("unreadable", err.getvalue())
-
-    def test_mkdir_creates_once_and_tolerates_existing(self):
-        ftp = FakeFtp(dirs={"/f3l_series/assets"})
-        remote = self.remote(ftp)
-        remote.mkdir("assets")
-        remote.mkdir("assets/highstart")
-        remote.mkdir("assets/highstart")
-        self.assertEqual(ftp.commands, [("MKD", "/f3l_series/assets/highstart")])
-        self.assertEqual(ftp.cwd_path, "/f3l_series")
-
-    def test_execute_plan_against_ftp_remote_creates_nested_dirs(self):
-        root = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, root)
-        make_site(root)
-        local = deploy.collect_deploy_set(root)
-        ftp = FakeFtp()
-        remote = self.remote(ftp)
-        plan = deploy.compute_plan(local, remote.read_manifest(), remote.listing())
-        deploy.execute_plan(plan, root, remote, deploy.build_manifest(local, "c", False, "t"),
-                            log=lambda msg: None)
-        self.assertEqual(
-            set(remote.listing()),
-            set(local) | {deploy.MANIFEST_NAME},
-        )
-        self.assertFalse(any(p.endswith(deploy.UPLOAD_SUFFIX) for p in ftp.files))
-
-    def test_missing_remote_dir_is_refused_not_created(self):
-        ftp = FakeFtp()
-        with unittest.mock.patch.object(deploy, "FTP", return_value=ftp):
-            ftp.connect = ftp.login = ftp.set_pasv = ftp.set_debuglevel = lambda *a: None
-            ftp.pwd = lambda: ftp.cwd_path
-            with self.assertRaisesRegex(deploy.UsageError, "refusing to create"):
-                deploy.FtpRemote("h", "u", "p", "/f3l_seires")
-            self.assertEqual(deploy.FtpRemote("h", "u", "p", "/f3l_series").base, "/f3l_series")
-        self.assertNotIn("/f3l_seires", ftp.dirs)
+    def test_publish_non_fast_forward(self):
+        local = self.local_map()
+        head = git(self.site, "rev-parse", "HEAD")
+        branch = git(self.site, "rev-parse", "--abbrev-ref", "HEAD")
+        tree = deploy.build_publish_tree(self.site, None, local, "d.test")
+        first = deploy.publish(self.site, "origin", "gh-pages", None, tree, local,
+                               head, branch, [], "t@h")
+        stray = advance_branch_with_stray(self.bare, "stray.html")
+        with self.assertRaises(deploy.GitError) as ctx:
+            deploy.publish(self.site, "origin", "gh-pages", first, tree, local,
+                           head, branch, [], "t@h")
+        self.assertIn("push to origin/gh-pages failed", str(ctx.exception))
+        self.assertIn("re-run", str(ctx.exception))
+        self.assertEqual(git(self.bare, "rev-parse", "refs/heads/gh-pages"), stray)
 
 
 if __name__ == "__main__":
